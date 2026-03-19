@@ -21,7 +21,7 @@ _HSJSON_CARDS_URL = (
     "https://api.hearthstonejson.com/v1/latest/{locale}/cards.json"
 )
 _HSJSON_ART_URL = (
-    "https://art.hearthstonejson.com/v1/render/latest/{locale}/{size}/{dbf_id}.png"
+    "https://art.hearthstonejson.com/v1/render/latest/{locale}/{size}/{card_id}.png"
 )
 
 # Singleton lock so multiple cogs share one loaded DB
@@ -106,21 +106,21 @@ class HSJsonClient:
     # Card images
     # ------------------------------------------------------------------
 
-    async def get_card_image_bytes(self, dbf_id: int) -> bytes:
+    async def get_card_image_bytes(self, card_id: str, dbf_id: int) -> bytes:
         """
         Fetch card render PNG bytes.
 
-        Tries the local Nginx cache first (CACHE_BASE_URL/cards/{dbf_id}.png).
+        Tries the local Nginx cache first (CACHE_BASE_URL/cards/{card_id}.png).
         Falls back to the upstream HearthstoneJSON art endpoint.
         """
         cache_url = (
             f"{settings.cache_base_url}/cards/"
-            f"{settings.hsjson_locale}/{settings.image_card_size}/{dbf_id}.png"
+            f"{settings.hsjson_locale}/{settings.image_card_size}/{card_id}.png"
         )
         upstream_url = _HSJSON_ART_URL.format(
             locale=settings.hsjson_locale,
             size=settings.image_card_size,
-            dbf_id=dbf_id,
+            card_id=card_id,
         )
         client = await self._client()
         # Try cache

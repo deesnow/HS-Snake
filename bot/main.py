@@ -21,7 +21,8 @@ log = logging.getLogger(__name__)
 class HsSnakeBot(commands.Bot):
     def __init__(self) -> None:
         intents = discord.Intents.default()
-        super().__init__(command_prefix="!", intents=intents)
+        intents.message_content = True  # privileged intent — must also be enabled in the Discord Developer Portal
+        super().__init__(command_prefix=settings.command_prefix, intents=intents)
 
     async def setup_hook(self) -> None:
         # Load command cogs
@@ -43,7 +44,7 @@ class HsSnakeBot(commands.Bot):
         await self.change_presence(
             activity=discord.Activity(
                 type=discord.ActivityType.watching,
-                name="Hearthstone decks 🐍",
+                name="Hearthstone decks - by DeeSnow 🐍",
             )
         )
 

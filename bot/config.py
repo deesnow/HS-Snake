@@ -29,6 +29,7 @@ class Settings:
     cache_base_url: str = field(
         default_factory=lambda: os.getenv("CACHE_BASE_URL", "http://cache")
     )
+    command_prefix: str = field(default_factory=lambda: os.getenv("COMMAND_PREFIX", "!"))
     log_level: int = field(
         default_factory=lambda: getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO)
     )

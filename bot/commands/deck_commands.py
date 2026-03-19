@@ -1,5 +1,5 @@
 """
-Deck-related slash commands: /deck and /deckimage.
+Deck-related slash commands: /deck, /analyzedeck, /deckimage.
 """
 import io
 import logging
@@ -14,13 +14,12 @@ from bot.services.image_generator import ImageGenerator
 
 log = logging.getLogger(__name__)
 
-# Rarity colour map for embed side-stripe and icons
 RARITY_ICON = {
-    "FREE": "⚪",
-    "COMMON": "⚪",
-    "RARE": "🔵",
-    "EPIC": "🟣",
-    "LEGENDARY": "🟠",
+    "FREE":      "⚪",
+    "COMMON":    "⚪",
+    "RARE":      "🔵",
+    "EPIC":      "🟣",
+    "LEGENDARY": "🟡",
 }
 
 FORMAT_LABELS = {
@@ -34,14 +33,31 @@ FORMAT_LABELS = {
 def _dust_cost(rarity: str, count: int) -> int:
     costs = {"FREE": 0, "COMMON": 40, "RARE": 100, "EPIC": 400, "LEGENDARY": 1600}
     per_copy = costs.get(rarity, 0)
-    # Only the first legendary copy counts; second copy is never crafted in HS
     if rarity == "LEGENDARY":
         return per_copy
     return per_copy * count
 
 
-def build_deck_embed(deck: "DeckInfo") -> discord.Embed:  # type: ignore[name-defined]
-    """Return a nicely formatted Discord embed for a deck."""
+def _total_dust(deck) -> int:
+    return sum(_dust_cost(e.card.rarity.upper(), e.count) for e in deck.cards)
+
+
+def build_simple_deck_text(deck, code: str) -> str:
+    """Return the simplified plain-text deck list matching the HS export style."""
+    lines = [
+        f"### {deck.hero_class}",
+        f"Cost: {_total_dust(deck):,}",
+        f"Format: {deck.format_label}",
+    ]
+    for entry in sorted(deck.cards, key=lambda e: (e.card.cost, e.card.name)):
+        icon = RARITY_ICON.get(entry.card.rarity.upper(), "⚪")
+        lines.append(f"{icon} {entry.count}x ({entry.card.cost}) {entry.card.name}")
+    lines.append(f"\n**Deck Code:**\n{code}")
+    return "\n".join(lines)
+
+
+def build_deck_embed(deck) -> discord.Embed:
+    """Return the detailed grouped embed (used by /analyzedeck)."""
     title = f"🐍 {deck.hero_class} — {deck.format_label}"
     embed = discord.Embed(title=title, colour=0x1A1A2E)
 
@@ -61,7 +77,7 @@ def build_deck_embed(deck: "DeckInfo") -> discord.Embed:  # type: ignore[name-de
         label = type_key.capitalize() + "s"
         lines = []
         for entry in sorted(entries, key=lambda e: (e.card.cost, e.card.name)):
-            icon = RARITY_ICON.get(entry.card.rarity.upper(), "⚪")
+            icon = RARITY_ICON.get(entry.card.rarity.upper(), "⬜")
             count_str = f"×{entry.count}" if entry.count > 1 else "  "
             lines.append(
                 f"`{count_str}` {icon} **{entry.card.name}** — {entry.card.cost} mana"
@@ -86,9 +102,23 @@ class DeckCommands(commands.Cog):
         self.decoder = DeckDecoder(self.hs_client)
         self.image_gen = ImageGenerator(self.hs_client)
 
-    @app_commands.command(name="deck", description="Decode a Hearthstone deck code into a card list.")
+    @app_commands.command(name="deck", description="Show a simple card list for a Hearthstone deck code.")
     @app_commands.describe(code="The Hearthstone deck code to decode")
     async def deck(self, interaction: discord.Interaction, code: str) -> None:
+        await interaction.response.defer()
+        try:
+            deck = await self.decoder.decode(code.strip())
+            text = build_simple_deck_text(deck, code.strip())
+            await interaction.followup.send(text)
+        except ValueError as exc:
+            await interaction.followup.send(f"❌ Invalid deck code: {exc}", ephemeral=True)
+        except Exception:
+            log.exception("Unexpected error in /deck")
+            await interaction.followup.send("❌ Something went wrong. Please try again.", ephemeral=True)
+
+    @app_commands.command(name="analyzedeck", description="Show a detailed grouped analysis of a Hearthstone deck.")
+    @app_commands.describe(code="The Hearthstone deck code to analyze")
+    async def analyzedeck(self, interaction: discord.Interaction, code: str) -> None:
         await interaction.response.defer()
         try:
             deck = await self.decoder.decode(code.strip())
@@ -97,7 +127,7 @@ class DeckCommands(commands.Cog):
         except ValueError as exc:
             await interaction.followup.send(f"❌ Invalid deck code: {exc}", ephemeral=True)
         except Exception:
-            log.exception("Unexpected error in /deck")
+            log.exception("Unexpected error in /analyzedeck")
             await interaction.followup.send("❌ Something went wrong. Please try again.", ephemeral=True)
 
     @app_commands.command(name="deckimage", description="Render a visual image of a Hearthstone deck.")
@@ -121,3 +151,4 @@ class DeckCommands(commands.Cog):
 
 async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(DeckCommands(bot))
+
