@@ -1,0 +1,18 @@
+# Development overrides — mounts local source for live reload
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+services:
+  bot:
+    build:
+      target: builder          # Use builder stage which has gcc etc.
+    volumes:
+      - ./bot:/app/bot         # Live-mount source
+      - ./assets:/app/assets
+    environment:
+      LOG_LEVEL: DEBUG
+    command: >
+      sh -c "pip install watchdog &&
+             python -m watchdog.watchmedo auto-restart
+               --patterns='*.py'
+               --recursive
+               -- python -m bot.main"
