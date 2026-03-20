@@ -51,6 +51,8 @@ def _parse_card(raw: dict) -> Optional[CardInfo]:
         health=raw.get("health"),
         durability=raw.get("durability"),
         flavor=raw.get("flavor"),
+        race=raw.get("race"),
+        spell_school=raw.get("spellSchool"),
     )
 
 

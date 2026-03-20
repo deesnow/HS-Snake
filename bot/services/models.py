@@ -20,6 +20,8 @@ class CardInfo:
     health: Optional[int] = None
     durability: Optional[int] = None
     flavor: Optional[str] = None
+    race: Optional[str] = None          # NAGA, PIRATE, DRAGON, … (minions)
+    spell_school: Optional[str] = None  # SHADOW, NATURE, FIRE, … (spells)
 
 
 @dataclass
@@ -34,6 +36,7 @@ class DeckInfo:
     format_label: str
     hero_dbf_id: int
     hero_class: str
+    deck_name: str = ""
     cards: list = field(default_factory=list)   # List[CardEntry]
 
     @property

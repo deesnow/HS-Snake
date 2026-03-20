@@ -44,52 +44,100 @@ def _total_dust(deck) -> int:
 
 def build_simple_deck_text(deck, code: str) -> str:
     """Return the simplified plain-text deck list matching the HS export style."""
+    sorted_entries = sorted(deck.cards, key=lambda e: (e.card.cost, e.card.name))
+
+    # Longest card line for separator length (icon + count + cost + name)
+    longest = max(
+        (len(f"{entry.count}x ({entry.card.cost}) {entry.card.name}") for entry in sorted_entries),
+        default=20,
+    )
+    separator = "─" * (longest + 4)  # +4 for the icon and spacing
+
     lines = [
-        f"### {deck.hero_class}",
-        f"Cost: {_total_dust(deck):,}",
-        f"Format: {deck.format_label}",
+        f"# **{deck.hero_class}**",
+        f"**Cost:** {_total_dust(deck):,} 💠",
+        f"**Format:** {deck.format_label}",
+        separator,
     ]
-    for entry in sorted(deck.cards, key=lambda e: (e.card.cost, e.card.name)):
+    for entry in sorted_entries:
         icon = RARITY_ICON.get(entry.card.rarity.upper(), "⚪")
         lines.append(f"{icon} {entry.count}x ({entry.card.cost}) {entry.card.name}")
     lines.append(f"\n**Deck Code:**\n{code}")
     return "\n".join(lines)
 
 
-def build_deck_embed(deck) -> discord.Embed:
-    """Return the detailed grouped embed (used by /analyzedeck)."""
-    title = f"🐍 {deck.hero_class} — {deck.format_label}"
-    embed = discord.Embed(title=title, colour=0x1A1A2E)
+TYPE_LABELS = {
+    "MINION":   "Minions",
+    "SPELL":    "Spells",
+    "WEAPON":   "Weapons",
+    "HERO":     "Heroes",
+    "LOCATION": "Locations",
+    "OTHER":    "Other",
+}
 
-    type_order = ["MINION", "SPELL", "WEAPON", "HERO", "LOCATION"]
+
+def _subtype(card) -> str:
+    """Return the tribe (minion) or spell school, or '-' if none."""
+    if card.race:
+        return card.race.capitalize()
+    if card.spell_school:
+        return card.spell_school.capitalize()
+    return "-"
+
+
+def _table_block(entries) -> str:
+    """Render a section of cards as a monospace code-block table."""
+    if not entries:
+        return ""
+
+    sorted_e = sorted(entries, key=lambda e: (e.card.cost, e.card.name))
+
+    # Column widths
+    name_w    = max(len(e.card.name) for e in sorted_e)
+    subtype_w = max(len(_subtype(e.card)) for e in sorted_e)
+    name_w    = max(name_w, 4)
+    subtype_w = max(subtype_w, 4)
+
+    header = f"  {'Cost':<4} {'Cnt':<3} {'Name':<{name_w}}  {'Type':<{subtype_w}}"
+    sep    = "─" * len(header)
+    rows   = [header, sep]
+
+    for e in sorted_e:
+        rar  = RARITY_ICON.get(e.card.rarity.upper(), "⚪")
+        cost = str(e.card.cost)
+        cnt  = f"×{e.count}"
+        name = e.card.name
+        sub  = _subtype(e.card)
+        rows.append(f"{rar} {cost:<4} {cnt:<3} {name:<{name_w}}  {sub:<{subtype_w}}")
+
+    return "```\n" + "\n".join(rows) + "\n```"
+
+
+def build_deck_embed(deck) -> discord.Embed:
+    """Return the detailed grouped embed (used by /deckanalyze)."""
+    total_dust = _total_dust(deck)
+    title = f"{deck.hero_class} — {deck.format_label}"
+    embed = discord.Embed(title=title, colour=0x1A1A2E)
+    embed.description = f"**Cost:** {total_dust:,} 💠  |  **Cards:** {deck.total_cards}"
+
+    type_order = ["MINION", "SPELL", "WEAPON", "LOCATION", "HERO", "OTHER"]
     grouped: dict[str, list] = {t: [] for t in type_order}
-    grouped["OTHER"] = []
 
     for entry in deck.cards:
-        card_type = entry.card.card_type.upper()
-        grouped.get(card_type, grouped["OTHER"]).append(entry)
+        ct = entry.card.card_type.upper()
+        grouped.get(ct, grouped["OTHER"]).append(entry)
 
-    total_dust = 0
-    for type_key in type_order + ["OTHER"]:
+    for type_key in type_order:
         entries = grouped[type_key]
         if not entries:
             continue
-        label = type_key.capitalize() + "s"
-        lines = []
-        for entry in sorted(entries, key=lambda e: (e.card.cost, e.card.name)):
-            icon = RARITY_ICON.get(entry.card.rarity.upper(), "⬜")
-            count_str = f"×{entry.count}" if entry.count > 1 else "  "
-            lines.append(
-                f"`{count_str}` {icon} **{entry.card.name}** — {entry.card.cost} mana"
-            )
-            total_dust += _dust_cost(entry.card.rarity.upper(), entry.count)
-        embed.add_field(
-            name=f"— {label} ({len(entries)}) —",
-            value="\n".join(lines),
-            inline=False,
-        )
+        label = f"{TYPE_LABELS.get(type_key, type_key)} ({len(entries)})"
+        block = _table_block(entries)
+        # Discord embed field value limit is 1024 chars; truncate if needed
+        if len(block) > 1024:
+            block = block[:1020] + "\n```"
+        embed.add_field(name=label, value=block, inline=False)
 
-    embed.set_footer(text=f"Total cards: {deck.total_cards}  |  Crafting cost: {total_dust:,} dust")
     return embed
 
 
@@ -116,7 +164,7 @@ class DeckCommands(commands.Cog):
             log.exception("Unexpected error in /deck")
             await interaction.followup.send("❌ Something went wrong. Please try again.", ephemeral=True)
 
-    @app_commands.command(name="analyzedeck", description="Show a detailed grouped analysis of a Hearthstone deck.")
+    @app_commands.command(name="deckanalyze", description="Show a detailed grouped analysis of a Hearthstone deck.")
     @app_commands.describe(code="The Hearthstone deck code to analyze")
     async def analyzedeck(self, interaction: discord.Interaction, code: str) -> None:
         await interaction.response.defer()
@@ -127,7 +175,7 @@ class DeckCommands(commands.Cog):
         except ValueError as exc:
             await interaction.followup.send(f"❌ Invalid deck code: {exc}", ephemeral=True)
         except Exception:
-            log.exception("Unexpected error in /analyzedeck")
+            log.exception("Unexpected error in /deckanalyze")
             await interaction.followup.send("❌ Something went wrong. Please try again.", ephemeral=True)
 
     @app_commands.command(name="deckimage", description="Render a visual image of a Hearthstone deck.")
