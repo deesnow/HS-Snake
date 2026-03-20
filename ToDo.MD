@@ -58,40 +58,122 @@ Players can search the full Hearthstone card database using filters (mana cost, 
 ## 2. Player Legend Rank Query
 
 ### Goal
-Players can query their current Hearthstone legend rank (and recent stats) directly in Discord.
+Players can query their current Hearthstone legend rank directly in Discord — no parameters needed once their BattleTag is registered. Optionally specify a game mode to narrow the output.
 
-### Data Source — d0nkey.top API
-The open-source [d0nkey.top](https://github.com/borisbabic/d0nkey.top) project exposes a public REST API that aggregates Hearthstone legend ladder data (sourced from HSReplay, Firestone, and direct submissions).
+### Data Source — Blizzard Official Public API
 
-**Relevant endpoints (base URL `https://www.d0nkey.top`):**
+```
+GET https://hearthstone.blizzard.com/en-us/api/community/leaderboardsData
+    ?region={region}
+    &leaderboardId={mode}
+    &page={page}
+    [&seasonId={id}]   ← optional, omit for current season
+```
 
-| Endpoint | Description |
+**Parameters:**
+
+| Parameter | Values |
 |---|---|
-| `GET /api/leaderboard?battletag=NAME&region=EU` | Fetch current legend rank for a BattleTag |
-| `GET /api/player-profile?battletag=NAME` | Extended profile: rank history, decks played |
-| `GET /api/grandmasters` | Current Grandmasters season standings |
+| `region` | `US`, `EU`, `AP` |
+| `leaderboardId` | `standard`, `wild`, `classic`, `battlegrounds`, `battlegroundsduo`, `arena`, `twist` |
+| `page` | 1-based integer; response includes `pagination.totalPages` |
 
-> **Note:** Confirm exact endpoint signatures from the repo's router/controller files before implementation — the API is not officially documented; inspect `lib/d0nkey_top_web/controllers/` in the source.
+**Response shape (per page, 25 entries):**
+```json
+{
+  "leaderboard": {
+    "rows": [
+      { "rank": 1, "accountid": "PlayerName#1234", "rating": null }
+    ],
+    "pagination": { "totalPages": 40 }
+  },
+  "season": { "seasonId": 134, "leaderboardId": "standard", "region": "EU" }
+}
+```
 
-### Proposed Command
-```
-/rank battletag:<BattleTag#12345> region:<EU|US|AP>
+> Player names are returned as bare BattleTag `Name#NNNN` strings.  
+> No auth token required — this endpoint is fully public.
+
+### Caching Strategy
+- Fetch and store all pages for a (region, mode, seasonId) combination as a single **snapshot** in SQLite.
+- Cache TTL: **10–15 minutes** — refresh only if snapshot is older than TTL when queried.
+- Schema additions to existing `bot/services/db.py`:
+  ```sql
+  CREATE TABLE ldb_snapshots (
+      id          INTEGER PRIMARY KEY,
+      region      TEXT NOT NULL,
+      mode        TEXT NOT NULL,
+      season_id   INTEGER NOT NULL,
+      fetched_at  TEXT NOT NULL  -- ISO-8601 UTC
+  );
+
+  CREATE TABLE ldb_entries (
+      snapshot_id INTEGER NOT NULL REFERENCES ldb_snapshots(id),
+      rank        INTEGER NOT NULL,
+      battletag   TEXT NOT NULL,   -- normalised to lower-case for lookup
+      rating      INTEGER,
+      PRIMARY KEY (snapshot_id, rank)
+  );
+  ```
+- Normalise stored BattleTag to **lower-case** for case-insensitive lookup; display the original casing from the API in output.
+
+### BattleTag Registration
+Players register once per Discord user so `/rank` needs no arguments thereafter.
+
+```sql
+CREATE TABLE user_battletags (
+    discord_id  TEXT PRIMARY KEY,
+    battletag   TEXT NOT NULL,   -- original casing
+    region      TEXT NOT NULL    -- default region: EU
+);
 ```
 
-**Response example:**
+- `/rankset battletag:<Name#1234> region:<EU|US|AP>` — registers / updates the caller's BattleTag
+- Stored in existing SQLite DB; no guild scope (user-level, persists across servers)
+
+### Commands
+
+#### `/rank [mode]`
+- `mode` is **optional** — choices: `standard`, `wild`, `bg` (maps to `battlegrounds`)
+- If omitted: shows **Standard** and **Wild** ranks side by side
+- If specified: shows only the requested mode
+- Requires prior `/rankset`; if not registered → ephemeral prompt to run `/rankset`
+
+**Default output (no mode):**
 ```
-🏆 PlayerName#1234 — EU Legend
-Rank: #842
-Season: March 2026
+🏆 PlayerName#1234 — EU Legend  ·  Season 134
+
+  Standard  │  Wild
+  ─────────────────
+    #842     │  #1205
 ```
 
-### Implementation Notes
-- Use existing `HSJsonClient`-style async HTTP pattern via `httpx`
-- `region` parameter maps to `EU`, `US`, `AP` (Asia-Pacific)
-- BattleTag format validation before making the API call (regex: `\w+#\d+`)
-- Cache results for ~5 minutes per BattleTag to avoid hammering the API
-- Handle 404 (player not found / not legend) with a friendly message
-- New file: `bot/services/donkey_client.py` + command added to a new cog or `deck_commands.py`
+**Mode-specific output:**
+```
+🏆 PlayerName#1234 — EU Legend  ·  Season 134
+Battlegrounds  →  #317
+```
+
+#### `/rankset battletag:<Name#1234> region:<EU|US|AP>`
+- Validates format with regex `^\w+#\d+$`
+- Upserts into `user_battletags`
+- Confirms with ephemeral reply
+
+### Implementation Plan
+
+| Step | File | Description |
+|---|---|---|
+| 1 | `bot/services/db.py` | Add `ldb_snapshots`, `ldb_entries`, `user_battletags` tables to schema |
+| 2 | `bot/services/leaderboard_client.py` | Async HTTP client — fetch all pages for (region, mode), return flat list of `(rank, battletag, rating)` |
+| 3 | `bot/services/leaderboard_cache.py` | Check snapshot freshness, fetch+store if stale, return entries from DB; expose `lookup(battletag, region, mode)` |
+| 4 | `bot/commands/rank_commands.py` | `/rank [mode]` + `/rankset` slash commands; new cog `RankCommands` |
+| 5 | `bot/main.py` | Load `bot.commands.rank_commands` extension |
+
+### Edge Cases
+- Player not on leaderboard (not legend this season) → "Not found in Top X legend this season."
+- API pagination failure (network error mid-fetch) → log warning, return stale cache if available
+- BattleTag name changes → user must re-run `/rankset`
+- CN region uses a different endpoint (`webapi.blizzard.cn`) — out of scope for now
 
 ---
 
@@ -100,4 +182,4 @@ Season: March 2026
 | # | Feature | Complexity |
 |---|---|---|
 | 1 | Card Search UI | Medium |
-| 2 | Player Rank Query | Low–Medium |
+| 2 | Player Rank Query | Medium |
