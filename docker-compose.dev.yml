@@ -4,7 +4,9 @@
 services:
   bot:
     build:
-      target: builder          # Use builder stage which has gcc etc.
+      context: .
+      dockerfile: docker/bot/Dockerfile
+      target: builder          # builder stage has gcc/pip tools for live reload
     volumes:
       - ./bot:/app/bot         # Live-mount source
       - ./assets:/app/assets
