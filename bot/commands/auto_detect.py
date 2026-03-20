@@ -10,6 +10,7 @@ Detection pipeline
 4. Reply       — same format as /deck command
 """
 import base64
+import io
 import logging
 import re
 
@@ -19,6 +20,7 @@ from discord.ext import commands
 import bot.services.guild_settings as gs
 from bot.services.deck_decoder import DeckDecoder
 from bot.services.hs_json_client import HSJsonClient
+from bot.services.image_generator import ImageGenerator
 from bot.commands.deck_commands import build_simple_deck_text
 
 log = logging.getLogger(__name__)
@@ -46,11 +48,49 @@ class AutoDetectCog(commands.Cog):
         self.bot = bot
         self.hs_client = HSJsonClient()
         self.decoder = DeckDecoder(self.hs_client)
+        self.image_gen = ImageGenerator(self.hs_client)
+
+    async def _reply_deck_image(self, message: discord.Message, token: str) -> bool:
+        """Decode *token* and reply with a deck image. Returns True on success."""
+        try:
+            deck = await self.decoder.decode(token)
+        except Exception:
+            return False
+
+        try:
+            image_bytes = await self.image_gen.generate_deck_image(deck)
+            file = discord.File(fp=image_bytes, filename="deck.png")
+            await message.reply(
+                content=f"**{deck.hero_class}** — {deck.format_label}  ·  {deck.total_cards} cards",
+                file=file,
+                mention_author=False,
+            )
+            return True
+        except discord.HTTPException:
+            log.warning("Failed to send deck image reply in channel %s", message.channel.id)
+            return False
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
-        # Ignore DMs, bot messages, and messages with no guild
-        if message.guild is None or message.author.bot:
+        # Ignore bot messages
+        if message.author.bot:
+            return
+
+        # ── Bot-mention path ──────────────────────────────────────────────────
+        # When the bot is @tagged AND a deck code is present, always reply with
+        # the deck image — regardless of guild settings or channel scope.
+        if self.bot.user in message.mentions:
+            candidates = _DECK_RE.findall(message.content)
+            for token in candidates:
+                if _looks_like_deck_code(token):
+                    await self._reply_deck_image(message, token)
+                    return  # handled; do not fall through to auto-detect
+            # Bot was mentioned but no deck code found — ignore silently
+            return
+
+        # ── Auto-detect path ─────────────────────────────────────────────────
+        # Ignore DMs for the passive auto-detect feature
+        if message.guild is None:
             return
 
         cfg = await gs.load(message.guild.id)

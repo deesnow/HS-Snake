@@ -187,7 +187,7 @@ class DeckCommands(commands.Cog):
             image_bytes = await self.image_gen.generate_deck_image(deck)
             file = discord.File(fp=image_bytes, filename="deck.png")
             await interaction.followup.send(
-                content=f"**{deck.hero_class}** — {deck.format_label}",
+                content=f"**{deck.hero_class}** — {deck.format_label}  ·  {deck.total_cards} cards",
                 file=file,
             )
         except ValueError as exc:
