@@ -45,10 +45,22 @@ class DeckDecoder:
         """
         Decode a Hearthstone deck code string into a DeckInfo object.
 
-        Raises ValueError for malformed codes.
+        Accepts either a bare base64 code or the full Hearthstone export block
+        (which starts with ### DeckName).  Raises ValueError for malformed codes.
         """
+        # Extract deck name and bare code from a full HS export block if present
+        deck_name = ""
+        bare_code = code.strip()
+        for line in code.splitlines():
+            line = line.strip()
+            if line.startswith("###"):
+                deck_name = line.lstrip("#").strip()
+            elif line and not line.startswith("#"):
+                bare_code = line  # first non-comment, non-empty line is the code
+                break
+
         try:
-            raw_deck = Deck.from_deckstring(code)
+            raw_deck = Deck.from_deckstring(bare_code)
         except Exception as exc:
             raise ValueError(f"Could not parse deck code: {exc}") from exc
 
@@ -78,5 +90,6 @@ class DeckDecoder:
             format_label=format_label,
             hero_dbf_id=hero_dbf_id,
             hero_class=hero_class,
+            deck_name=deck_name,
             cards=card_entries,
         )

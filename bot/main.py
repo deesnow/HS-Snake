@@ -11,6 +11,8 @@ from discord.ext import commands
 
 from bot.config import settings
 
+__version__ = "0.2.0"
+
 logging.basicConfig(
     level=settings.log_level,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -21,12 +23,15 @@ log = logging.getLogger(__name__)
 class HsSnakeBot(commands.Bot):
     def __init__(self) -> None:
         intents = discord.Intents.default()
-        super().__init__(command_prefix="!", intents=intents)
+        intents.message_content = True  # privileged intent — must also be enabled in the Discord Developer Portal
+        super().__init__(command_prefix=settings.command_prefix, intents=intents)
 
     async def setup_hook(self) -> None:
         # Load command cogs
         await self.load_extension("bot.commands.deck_commands")
         await self.load_extension("bot.commands.card_commands")
+        await self.load_extension("bot.commands.admin_commands")
+        await self.load_extension("bot.commands.auto_detect")
 
         # Sync slash commands (guild-scoped during dev, global in prod)
         if settings.discord_guild_id:
@@ -39,11 +44,11 @@ class HsSnakeBot(commands.Bot):
             log.info("Slash commands synced globally")
 
     async def on_ready(self) -> None:
-        log.info("Logged in as %s (id=%s)", self.user, self.user.id)
+        log.info("HS-Snake v%s — logged in as %s (id=%s)", __version__, self.user, self.user.id)
         await self.change_presence(
             activity=discord.Activity(
                 type=discord.ActivityType.watching,
-                name="Hearthstone decks 🐍",
+                name=f"Hearthstone Assistant v{__version__} - by DeeSnow",
             )
         )
 

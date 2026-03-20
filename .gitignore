@@ -31,3 +31,9 @@ Thumbs.db
 
 # Assets (downloaded at runtime)
 assets/cards/
+
+# Private setup docs
+DISCORD_SETUP.md
+
+# External reference repos (all xx_* folders)
+xx_*/
