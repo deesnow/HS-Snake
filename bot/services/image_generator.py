@@ -6,7 +6,7 @@ Layout
 • Canvas   = class-specific background image (3000 × ~2344 px, RGBA)
 • Card size = dynamically maximised so the grid fills the canvas
               without overlapping the dust-cost strip at y=2150
-• Cards     = left-to-right, new row when column exceeds WRAP_AT (2900 px)
+• Cards     = placed by index (no wrap trigger), edge-to-edge, no gaps
 • Labels    = PNG overlay images (assets/labels/x2.png … x9.png)
 • Dust cost = Belwe text at fixed position (170, 2150)
 """
@@ -32,13 +32,24 @@ LABELS_DIR = "assets/labels"
 FONT_PATH  = "assets/fonts/Belwe.ttf"
 
 # ── Background wrap threshold (matches the 3000 px wide background) ────
-WRAP_AT    = 2900   # start a new row when col reaches this value
-ROW_GAP    = 40     # px between rows
+CANVAS_W   = 3000   # px — background image width
+CANVAS_H   = 2344   # px — background image height
 
 # ── Dust cost text position (fixed, matches background artwork) ────────
-DUST_X     = 170
-DUST_Y     = 2150
-DUST_SIZE  = 140    # Belwe font size at 3000 px canvas width
+DUST_X      = 170
+DUST_Y      = 2150
+DUST_SIZE   = 140    # Belwe font size at 3000 px canvas width
+
+# ── Bottom branding strip ────────────────────────────────────────────
+# The background PNGs bake in 'Deck Viewer' + github link on the right
+# side of the bottom strip.  The dust bottle icon lives on the LEFT side
+# (x ≈ 0–135) and must be preserved.
+# We cover only the right portion where text lives.
+BRAND_COVER_X  = 2100   # x from which the text erasure begins
+BRAND_COVER_Y  = 2170   # y at which the baked-in text starts
+BRAND_CLONE_Y  = 2155   # y of the clean background row used as fill source
+BRAND_TITLE    = "Deck Viewer"
+BRAND_MARGIN   = 40     # px from right + bottom edges
 
 # ── Class → background file ID ─────────────────────────────────────────
 CLASS_BACK_IDS: dict[str, int] = {
@@ -57,41 +68,55 @@ CLASS_BACK_IDS: dict[str, int] = {
     "Deathknight":  14,
 }
 
-# ── Card aspect ratio (hearthstonejson 512x renders are 512×776) ───────
-_CARD_RATIO = 776 / 512   # ≈ 1.515
+# ── Card aspect ratio ─────────────────────────────────────────────────
+# Raw renders are 512×776.  Minion frames (the tightest type) have padding:
+#   L=19  R=42  T=65  B=82  → content area 451×629  ratio≈1.395
+# We crop by these exact amounts for EVERY card type so all cards receive
+# an identical crop — no per-card alpha detection, no size variation.
+_CROP_L = 19
+_CROP_R = 42
+_CROP_T = 65
+_CROP_B = 82
+# Content dimensions after fixed crop (512-19-42=451, 776-65-82=629)
+_CONTENT_W = 512 - _CROP_L - _CROP_R   # 451
+_CONTENT_H = 776 - _CROP_T - _CROP_B   # 629
+_CARD_RATIO = _CONTENT_H / _CONTENT_W   # ≈ 1.395
 
 # ── Label proportions relative to card_w (derived from elise bucket 500) ─
 # original: card_w=500, label=(214,121), offset=(150, 729), card_h=757
 _LBL_W_FRAC  = 214 / 500   # ≈ 0.428
 _LBL_H_FRAC  = 121 / 757   # ≈ 0.160  (relative to card_h)
 _LBL_DX_FRAC = 150 / 500   # ≈ 0.300
-_LBL_DY_FRAC = 729 / 757   # ≈ 0.963  (relative to card_h)
+_LBL_DY_FRAC = 0.88         # place label at 88 % down the card height
 
 
-def _calc_card_size(n: int) -> tuple[int, int]:
-    """​Return (card_w, card_h) that maximises card width so the grid
-    fills the canvas height up to but not beyond DUST_Y.
+def _fixed_crop(im: Image.Image) -> Image.Image:
+    """Crop a fixed number of pixels from each side (based on minion frame
+    padding measurements).  Every card type receives the same crop so all
+    cells appear the same size regardless of frame shape."""
+    w, h = im.size
+    return im.crop((_CROP_L, _CROP_T, w - _CROP_R, h - _CROP_B))
 
-    For a given column count c:
-      • cards_per_row = floor(WRAP_AT / card_w) + 1 = c
-        ⇒ max card_w = WRAP_AT // (c - 1)  for c > 1,  WRAP_AT for c = 1
-      • rows = ceil(n / c)
-      • total_h = rows * card_h + (rows - 1) * ROW_GAP
 
-    Iterates c from 1 upward; returns the first (smallest c, largest card_w)
-    whose grid fits within the available height.
+def _calc_card_size(n: int) -> tuple[int, int, int]:
+    """Return (card_w, card_h, cols) that maximises card width so the
+    grid fits fully inside the canvas without going below DUST_Y.
+
+    For each candidate column count c (starting from smallest = widest cards):
+      card_w = CANVAS_W // c          ← fills the canvas edge-to-edge
+      rows   = ceil(n / c)
+      total_h = rows * card_h         ← no gap between rows
+    Returns the first c whose total_h ≤ DUST_Y.
     """
-    max_h = DUST_Y - ROW_GAP  # leave a gap above the dust strip
     for cols in range(1, n + 1):
-        card_w = WRAP_AT if cols == 1 else WRAP_AT // (cols - 1)
+        card_w = CANVAS_W // cols
         card_h = round(card_w * _CARD_RATIO)
         rows   = math.ceil(n / cols)
-        total_h = rows * card_h + max(0, rows - 1) * ROW_GAP
-        if total_h <= max_h:
-            return card_w, card_h
-    # Fallback: single row, minimum size
-    card_w = WRAP_AT // n
-    return card_w, round(card_w * _CARD_RATIO)
+        if rows * card_h <= DUST_Y:
+            return card_w, card_h, cols
+    # Fallback: all cards in one row, minimum width
+    card_w = CANVAS_W // n
+    return card_w, round(card_w * _CARD_RATIO), n
 
 
 def _label_geometry(card_w: int, card_h: int) -> tuple[tuple[int, int], int, int]:
@@ -128,7 +153,7 @@ class ImageGenerator:
         )
         n = len(entries)
 
-        card_w, card_h = _calc_card_size(n)
+        card_w, card_h, cols = _calc_card_size(n)
         label_wh, lbl_dx, lbl_dy = _label_geometry(card_w, card_h)
 
         # ── Load background ───────────────────────────────────────────
@@ -171,18 +196,20 @@ class ImageGenerator:
         )
 
         # ── Place cards ───────────────────────────────────────────────
-        col, row = 0, 0
+        for idx, (entry, raw) in enumerate(zip(entries, image_data)):
+            # Index-based placement: no wrap trigger, no gap between cards.
+            # Guarantees every card lands within the canvas bounds.
+            x = (idx % cols) * card_w
+            y = (idx // cols) * card_h
 
-        for entry, raw in zip(entries, image_data):
             if raw:
                 try:
                     im = Image.open(io.BytesIO(raw)).convert("RGBA")
-                    # All hearthstonejson renders are 512×776 — resize uniformly
-                    # (no alpha-crop) so every card occupies exactly card_w×card_h.
-                    # Paste with alpha mask so the card frame transparency
-                    # shows the class background art instead of black.
+                    # Fixed-pixel crop: same amount removed from every card type
+                    # so all cards look the same size (no per-card alpha detection).
+                    im = _fixed_crop(im)
                     im = im.resize((card_w, card_h), Image.LANCZOS)
-                    canvas.paste(im, (col, row), mask=im)
+                    canvas.paste(im, (x, y), mask=im)
                 except Exception:
                     log.debug("Failed to render card %s", entry.card.card_id)
 
@@ -190,22 +217,47 @@ class ImageGenerator:
             if entry.count >= 2:
                 label = _load_label(entry.count) if entry.count > 2 else label_default
                 if label:
-                    canvas.paste(label, (col + lbl_dx, row + lbl_dy), mask=label)
+                    canvas.paste(label, (x + lbl_dx, y + lbl_dy), mask=label)
 
-            col += card_w
-            if col > WRAP_AT:
-                col = 0
-                row += card_h + ROW_GAP
-
-        # ── Dust cost ─────────────────────────────────────────────────
+        # ── Dust cost + branding footer ──────────────────────────────────────
         total_dust = sum(_dust_cost(e.card.rarity, e.count) for e in entries)
-        font  = _load_font(DUST_SIZE)
         draw  = ImageDraw.Draw(canvas)
+
+        # Erase the baked-in 'Deck Viewer' + github text from the background
+        # by tiling a clean background row (just above the text) over the area.
+        # This preserves the dust bottle icon on the left and leaves no
+        # solid-colour patch visible on any class background.
+        strip_w = CANVAS_W - BRAND_COVER_X
+        clone_row = canvas.crop(
+            (BRAND_COVER_X, BRAND_CLONE_Y, CANVAS_W, BRAND_CLONE_Y + 1)
+        )  # 1-px tall stripe of clean background
+        for ty in range(BRAND_COVER_Y, CANVAS_H):
+            canvas.paste(clone_row, (BRAND_COVER_X, ty))
+        draw  = ImageDraw.Draw(canvas)   # redraw after paste
+
+        # Dust cost — white text with black stroke; no background rectangle
+        font_dust = _load_font(DUST_SIZE)
         draw.text(
             (DUST_X, DUST_Y),
             str(total_dust),
             fill=(255, 255, 255),
-            font=font,
+            font=font_dust,
+            stroke_fill=(0, 0, 0),
+            stroke_width=5,
+        )
+
+        # 'Deck Viewer' title — same font size and style as dust cost
+        font_brand = font_dust
+        bbox  = draw.textbbox((0, 0), BRAND_TITLE, font=font_brand)
+        bw    = bbox[2] - bbox[0]
+        bh    = bbox[3] - bbox[1]
+        bx    = CANVAS_W - bw - BRAND_MARGIN
+        by    = CANVAS_H - bh - BRAND_MARGIN
+        draw.text(
+            (bx, by),
+            BRAND_TITLE,
+            fill=(255, 255, 255),
+            font=font_brand,
             stroke_fill=(0, 0, 0),
             stroke_width=5,
         )
