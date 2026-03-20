@@ -2,7 +2,7 @@ services:
 
   # ── Discord Bot ────────────────────────────────────────────────────
   bot:
-    image: ghcr.io/OWNER/hs-snake:latest   # replace OWNER with your GitHub username
+    image: ghcr.io/deesnow/hs-snake:latest
     pull_policy: always
     env_file: .env
     depends_on:
