@@ -11,7 +11,7 @@ from discord.ext import commands
 
 from bot.config import settings
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 logging.basicConfig(
     level=settings.log_level,

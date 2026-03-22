@@ -27,7 +27,8 @@ log = logging.getLogger(__name__)
 
 # Hearthstone deck codes are base64url strings, typically 60–200 chars,
 # always starting with "AAE" (the encoded header byte sequence).
-_DECK_RE = re.compile(r'\bAAE[A-Za-z0-9+/]{20,}={0,2}\b')
+# Note: trailing \b cannot be used after '=' (non-word char); (?!\w) is used instead.
+_DECK_RE = re.compile(r'\bAAE[A-Za-z0-9+/]{20,}={0,2}(?!\w)')
 
 
 def _looks_like_deck_code(token: str) -> bool:
