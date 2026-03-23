@@ -43,7 +43,7 @@ Players can search the full Hearthstone card database using filters (mana cost, 
 | Card Type | Any, Minion, Spell, Weapon, Hero, Location |
 
 ### Result Display
-- Each page shows up to 10 cards as text lines: `⚪ Wisp — 0 mana Neutral Minion`
+- Each page shows up to 10 cards as text lines: `⚪ Wisp`
 - Optional: clicking a card name button triggers `/card <name>` to show its image
 - Results capped at 100 to avoid hitting Discord message size limits
 

@@ -154,31 +154,31 @@ class DeckCommands(commands.Cog):
     @app_commands.describe(code="The Hearthstone deck code to decode")
     async def deck(self, interaction: discord.Interaction, code: str) -> None:
         log.info("/deck user=%s guild=%s channel=%s code=%.40s", interaction.user, interaction.guild_id, interaction.channel_id, code.strip())
-        await interaction.response.defer()
+        await interaction.response.send_message("⏳ Decoding deck…")
         try:
             deck = await self.decoder.decode(code.strip())
             text = build_simple_deck_text(deck, code.strip())
-            await interaction.followup.send(text)
+            await interaction.edit_original_response(content=text)
         except ValueError as exc:
-            await interaction.followup.send(f"❌ Invalid deck code: {exc}", ephemeral=True)
+            await interaction.edit_original_response(content=f"❌ Invalid deck code: {exc}")
         except Exception:
             log.exception("Unexpected error in /deck")
-            await interaction.followup.send("❌ Something went wrong. Please try again.", ephemeral=True)
+            await interaction.edit_original_response(content="❌ Something went wrong. Please try again.")
 
     @app_commands.command(name="deckanalyze", description="Show a detailed grouped analysis of a Hearthstone deck.")
     @app_commands.describe(code="The Hearthstone deck code to analyze")
     async def analyzedeck(self, interaction: discord.Interaction, code: str) -> None:
         log.info("/deckanalyze user=%s guild=%s channel=%s code=%.40s", interaction.user, interaction.guild_id, interaction.channel_id, code.strip())
-        await interaction.response.defer()
+        await interaction.response.send_message("⏳ Analysing deck…")
         try:
             deck = await self.decoder.decode(code.strip())
             embed = build_deck_embed(deck)
-            await interaction.followup.send(embed=embed)
+            await interaction.edit_original_response(content=None, embed=embed)
         except ValueError as exc:
-            await interaction.followup.send(f"❌ Invalid deck code: {exc}", ephemeral=True)
+            await interaction.edit_original_response(content=f"❌ Invalid deck code: {exc}")
         except Exception:
             log.exception("Unexpected error in /deckanalyze")
-            await interaction.followup.send("❌ Something went wrong. Please try again.", ephemeral=True)
+            await interaction.edit_original_response(content="❌ Something went wrong. Please try again.")
 
     @app_commands.command(name="deckimage", description="Render a visual image of a Hearthstone deck.")
     @app_commands.describe(code="The Hearthstone deck code to render")
@@ -194,10 +194,10 @@ class DeckCommands(commands.Cog):
                 file=file,
             )
         except ValueError as exc:
-            await interaction.followup.send(f"❌ Invalid deck code: {exc}", ephemeral=True)
+            await interaction.followup.send(content=f"❌ Invalid deck code: {exc}", ephemeral=True)
         except Exception:
             log.exception("Unexpected error in /deckimage")
-            await interaction.followup.send("❌ Something went wrong. Please try again.", ephemeral=True)
+            await interaction.followup.send(content="❌ Something went wrong. Please try again.", ephemeral=True)
 
 
 async def setup(bot: commands.Bot) -> None:

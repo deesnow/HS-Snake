@@ -11,7 +11,7 @@ from discord.ext import commands
 
 from bot.config import settings
 
-__version__ = "0.2.4"
+__version__ = "0.3.01"
 
 _log_handlers: list[logging.Handler] = [logging.StreamHandler()]
 if settings.log_file:
@@ -39,6 +39,7 @@ class HsSnakeBot(commands.Bot):
         await self.load_extension("bot.commands.card_commands")
         await self.load_extension("bot.commands.admin_commands")
         await self.load_extension("bot.commands.auto_detect")
+        await self.load_extension("bot.commands.search_commands")
 
         # Sync slash commands (guild-scoped during dev, global in prod)
         if settings.discord_guild_id:
