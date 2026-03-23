@@ -10,6 +10,7 @@ services:
     volumes:
       - ./bot:/app/bot         # Live-mount source
       - ./assets:/app/assets
+      - ./docker/log:/app/logs
     environment:
       LOG_LEVEL: DEBUG
     command: >

@@ -5,11 +5,14 @@ services:
     image: ghcr.io/deesnow/hs-snake:latest
     pull_policy: always
     env_file: .env
+    environment:
+      LOG_FILE: /app/logs/bot.log
     depends_on:
       cache:
         condition: service_healthy
     volumes:
       - ./data:/app/data
+      - ./docker/log:/app/logs
     restart: unless-stopped
     networks:
       - internal

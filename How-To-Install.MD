@@ -50,10 +50,10 @@ curl --create-dirs -o docker/cache/nginx.conf \
      https://raw.githubusercontent.com/deesnow/hs-snake/main/docker/cache/nginx.conf
 ```
 
-Create a `data/` directory for the bot's database and a `.env` file:
+Create the required directories for the bot's database and log files, then create a `.env` file:
 
 ```bash
-mkdir -p data
+mkdir -p data docker/log
 ```
 
 ```env
@@ -101,7 +101,7 @@ docker compose version
 
 ```bash
 mkdir hs-snake && cd hs-snake
-mkdir -p data docker/cache
+mkdir -p data docker/cache docker/log
 ```
 
 ### A.3 — Download the two required config files
@@ -294,7 +294,8 @@ hs-snake/
 │   └── fonts/                  # Belwe.ttf for deck image rendering
 ├── docker/
 │   ├── bot/Dockerfile          # Multi-stage Python image
-│   └── cache/nginx.conf        # Nginx proxy cache config
+│   ├── cache/nginx.conf        # Nginx proxy cache config
+│   └── log/                    # Log file output (bind-mounted into the container)
 ├── docker-compose.yml          # Production stack
 ├── docker-compose.dev.yml      # Development overrides
 ├── requirements.txt
