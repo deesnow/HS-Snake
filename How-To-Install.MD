@@ -247,10 +247,29 @@ git clone https://github.com/deesnow/hs-snake.git
 cd hs-snake
 cp .env.example .env
 # fill in DISCORD_TOKEN in .env
-
-# Build and run (dev mode with live reload + DEBUG logs)
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 ```
+
+**Selecting a branch to test:**
+
+```bash
+# List all available branches
+git branch -a
+
+# Switch to an existing local branch
+git checkout feature/my-branch
+
+# Or check out a remote branch (creates a local tracking branch)
+git checkout -b feature/my-branch origin/feature/my-branch
+```
+
+After switching branches, rebuild and run in dev mode (live reload + DEBUG logs):
+
+```bash
+# Build and run (dev mode with live reload + DEBUG logs)
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+```
+
+> Pass `--build` whenever you switch branches to ensure the image reflects the checked-out code. Omit it if you only changed `.py` files that are live-mounted (the watchdog reloader handles those without a rebuild).
 
 Source files are mounted from your local disk, so any `.py` change triggers an automatic container restart — no rebuild needed.
 
