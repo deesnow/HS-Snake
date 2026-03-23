@@ -23,6 +23,7 @@ class CardCommands(commands.Cog):
     @app_commands.command(name="card", description="Show the card picture for a Hearthstone card.")
     @app_commands.describe(name="Card name to search for")
     async def card(self, interaction: discord.Interaction, name: str) -> None:
+        log.info("/card user=%s guild=%s channel=%s name=%r", interaction.user, interaction.guild_id, interaction.channel_id, name.strip())
         await interaction.response.defer()
         try:
             card = await self.hs_client.find_card_by_name(name.strip())

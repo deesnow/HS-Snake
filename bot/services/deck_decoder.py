@@ -59,6 +59,7 @@ class DeckDecoder:
                 bare_code = line  # first non-comment, non-empty line is the code
                 break
 
+        log.debug("decode start code=%.40s", bare_code)
         try:
             raw_deck = Deck.from_deckstring(bare_code)
         except Exception as exc:
@@ -85,7 +86,7 @@ class DeckDecoder:
                 continue
             card_entries.append(CardEntry(card=card, count=count))
 
-        return DeckInfo(
+        result = DeckInfo(
             format_id=format_id,
             format_label=format_label,
             hero_dbf_id=hero_dbf_id,
@@ -93,3 +94,5 @@ class DeckDecoder:
             deck_name=deck_name,
             cards=card_entries,
         )
+        log.debug("decode success class=%s format=%s cards=%d", hero_class, format_label, len(card_entries))
+        return result

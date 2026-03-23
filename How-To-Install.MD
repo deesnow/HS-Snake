@@ -238,47 +238,82 @@ python -m bot.main
 
 ---
 
-## Option C — Build from Source (Developers)
+## Option C — Build from Source (Developers / Windows 11 + Docker Desktop + VS Code)
 
-Clone and build the Docker image locally instead of pulling it:
+This is the recommended path if you are developing on **Windows 11** with **Docker Desktop** and **VS Code** — the source tree is already on disk, so no separate clone is needed.
 
-```bash
-git clone https://github.com/deesnow/hs-snake.git
-cd hs-snake
-cp .env.example .env
-# fill in DISCORD_TOKEN in .env
+### Prerequisites
+
+| Tool | Notes |
+|---|---|
+| Docker Desktop | Enable the **WSL 2 backend** (recommended) or Hyper-V backend in Docker Desktop → Settings → General |
+| VS Code | With the **Dev Containers** or **Docker** extension installed (optional but handy) |
+| Git | Comes with Git for Windows or VS Code's built-in Git |
+
+### C.1 — One-time setup
+
+Open a **PowerShell** or **VS Code terminal** in the repo root:
+
+```powershell
+# Copy the env template and fill in your DISCORD_TOKEN
+Copy-Item .env.example .env
+notepad .env
+
+# Create directories required by Docker bind-mounts
+New-Item -ItemType Directory -Force -Path data, docker\cache, docker\log
 ```
 
-**Selecting a branch to test:**
+### C.2 — Switch to the branch you want to test
 
-```bash
-# List all available branches
+```powershell
+# See all local and remote branches
 git branch -a
 
 # Switch to an existing local branch
 git checkout feature/my-branch
 
-# Or check out a remote branch (creates a local tracking branch)
+# Or check out a remote branch for the first time
 git checkout -b feature/my-branch origin/feature/my-branch
 ```
 
-After switching branches, rebuild and run in dev mode (live reload + DEBUG logs):
+You can also switch branches directly in VS Code via the **branch indicator** in the bottom-left status bar.
 
-```bash
-# Build and run (dev mode with live reload + DEBUG logs)
+### C.3 — Build and run with Docker Desktop
+
+```powershell
+# Dev mode: live-reload + DEBUG logs (recommended for active development)
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
-```
 
-> Pass `--build` whenever you switch branches to ensure the image reflects the checked-out code. Omit it if you only changed `.py` files that are live-mounted (the watchdog reloader handles those without a rebuild).
-
-Source files are mounted from your local disk, so any `.py` change triggers an automatic container restart — no rebuild needed.
-
-To build and run the production image locally:
-
-```bash
+# Production image build (to test exactly what would ship)
 docker compose build bot
 docker compose up -d
 ```
+
+> **`--build` is required after every branch switch** — it rebuilds the image from the checked-out code.  
+> Omit `--build` only when you changed `.py` files that are live-mounted; the watchdog reloader restarts the bot automatically without a rebuild.
+
+### C.4 — Monitoring in Docker Desktop
+
+After `docker compose up` you can use the **Docker Desktop UI** instead of the CLI:
+
+- **Containers tab** → expand the `hs-snake` stack → click the `bot` container to view live logs
+- **Click the container name** → open the **Logs** tab for a scrollable, searchable log view
+- **Click ▶ / ■** to start or stop individual containers without touching the terminal
+
+### C.5 — Switching branches while the stack is running
+
+```powershell
+# 1. Stop the running stack (keeps volumes/data intact)
+docker compose down
+
+# 2. Switch branch in VS Code or via terminal
+git checkout other-branch
+
+# 3. Rebuild and restart
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+```
+
+> Logs are written to `./docker/log/bot.log` on the host — visible in VS Code's Explorer panel while the bot is running.
 
 ---
 
