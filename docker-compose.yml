@@ -9,7 +9,7 @@ services:
       cache:
         condition: service_healthy
     volumes:
-      - bot-data:/app/data
+      - ./data:/app/data
     restart: unless-stopped
     networks:
       - internal
@@ -24,14 +24,14 @@ services:
     networks:
       - internal
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost/health"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/health"]
       interval: 10s
       timeout: 5s
       retries: 3
+      start_period: 10s
 
 volumes:
   card-cache:
-  bot-data:
 
 networks:
   internal:

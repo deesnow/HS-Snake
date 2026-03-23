@@ -53,7 +53,7 @@ curl --create-dirs -o docker/cache/nginx.conf \
 Create a `data/` directory for the bot's database and a `.env` file:
 
 ```bash
-mkdir data
+mkdir -p data
 ```
 
 ```env
@@ -101,6 +101,7 @@ docker compose version
 
 ```bash
 mkdir hs-snake && cd hs-snake
+mkdir -p data docker/cache
 ```
 
 ### A.3 — Download the two required config files
@@ -110,8 +111,7 @@ mkdir hs-snake && cd hs-snake
 curl -O https://raw.githubusercontent.com/deesnow/hs-snake/main/docker-compose.yml
 
 # nginx.conf — card image proxy cache configuration
-mkdir -p docker/cache
-curl -o docker/cache/nginx.conf \
+curl --create-dirs -o docker/cache/nginx.conf \
      https://raw.githubusercontent.com/deesnow/hs-snake/main/docker/cache/nginx.conf
 ```
 
@@ -191,7 +191,7 @@ Press `Ctrl+C` to stop following logs — the bot keeps running in the backgroun
 | Update to the latest image | `docker compose pull && docker compose up -d` |
 | View recent logs | `docker compose logs --tail=100 bot` |
 
-> Guild settings (SQLite) are persisted in the `bot-data` Docker volume and survive restarts and image updates.
+> Guild settings (SQLite) are persisted in `./data/bot.db` (bind-mounted into the container) and survive restarts and image updates.
 
 ---
 
@@ -313,5 +313,5 @@ hs-snake/
 | Bot is online but slash commands do not appear | Global sync delay | Set `DISCORD_GUILD_ID` to your server ID for instant guild-scoped sync |
 | `deckimage` returns no image / error in logs | Card image fetch failed | Check internet access; try `IMAGE_CARD_SIZE=256x` |
 | `cache` container unhealthy | Nginx still starting | Wait 10–15 s; run `docker compose ps` again |
-| Permission denied writing `data/bot.db` | Volume mounted before user created | Rebuild the image: `docker compose build bot` |
+| Permission denied writing `data/bot.db` | `data/` directory missing or wrong ownership | Run `mkdir -p data` in the working directory before `docker compose up` |
 | Message Content Intent error in logs | Intent not enabled in Developer Portal | Go to **Bot → Privileged Gateway Intents** and enable **Message Content Intent** |
