@@ -50,10 +50,10 @@ curl --create-dirs -o docker/cache/nginx.conf \
      https://raw.githubusercontent.com/deesnow/hs-snake/main/docker/cache/nginx.conf
 ```
 
-Create a `data/` directory for the bot's database and a `.env` file:
+Create the required directories for the bot's database and log files, then create a `.env` file:
 
 ```bash
-mkdir data
+mkdir -p data docker/log
 ```
 
 ```env
@@ -101,6 +101,7 @@ docker compose version
 
 ```bash
 mkdir hs-snake && cd hs-snake
+mkdir -p data docker/cache docker/log
 ```
 
 ### A.3 — Download the two required config files
@@ -110,8 +111,7 @@ mkdir hs-snake && cd hs-snake
 curl -O https://raw.githubusercontent.com/deesnow/hs-snake/main/docker-compose.yml
 
 # nginx.conf — card image proxy cache configuration
-mkdir -p docker/cache
-curl -o docker/cache/nginx.conf \
+curl --create-dirs -o docker/cache/nginx.conf \
      https://raw.githubusercontent.com/deesnow/hs-snake/main/docker/cache/nginx.conf
 ```
 
@@ -191,7 +191,7 @@ Press `Ctrl+C` to stop following logs — the bot keeps running in the backgroun
 | Update to the latest image | `docker compose pull && docker compose up -d` |
 | View recent logs | `docker compose logs --tail=100 bot` |
 
-> Guild settings (SQLite) are persisted in the `bot-data` Docker volume and survive restarts and image updates.
+> Guild settings (SQLite) are persisted in `./data/bot.db` (bind-mounted into the container) and survive restarts and image updates.
 
 ---
 
@@ -238,28 +238,82 @@ python -m bot.main
 
 ---
 
-## Option C — Build from Source (Developers)
+## Option C — Build from Source (Developers / Windows 11 + Docker Desktop + VS Code)
 
-Clone and build the Docker image locally instead of pulling it:
+This is the recommended path if you are developing on **Windows 11** with **Docker Desktop** and **VS Code** — the source tree is already on disk, so no separate clone is needed.
 
-```bash
-git clone https://github.com/deesnow/hs-snake.git
-cd hs-snake
-cp .env.example .env
-# fill in DISCORD_TOKEN in .env
+### Prerequisites
 
-# Build and run (dev mode with live reload + DEBUG logs)
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+| Tool | Notes |
+|---|---|
+| Docker Desktop | Enable the **WSL 2 backend** (recommended) or Hyper-V backend in Docker Desktop → Settings → General |
+| VS Code | With the **Dev Containers** or **Docker** extension installed (optional but handy) |
+| Git | Comes with Git for Windows or VS Code's built-in Git |
+
+### C.1 — One-time setup
+
+Open a **PowerShell** or **VS Code terminal** in the repo root:
+
+```powershell
+# Copy the env template and fill in your DISCORD_TOKEN
+Copy-Item .env.example .env
+notepad .env
+
+# Create directories required by Docker bind-mounts
+New-Item -ItemType Directory -Force -Path data, docker\cache, docker\log
 ```
 
-Source files are mounted from your local disk, so any `.py` change triggers an automatic container restart — no rebuild needed.
+### C.2 — Switch to the branch you want to test
 
-To build and run the production image locally:
+```powershell
+# See all local and remote branches
+git branch -a
 
-```bash
+# Switch to an existing local branch
+git checkout feature/my-branch
+
+# Or check out a remote branch for the first time
+git checkout -b feature/my-branch origin/feature/my-branch
+```
+
+You can also switch branches directly in VS Code via the **branch indicator** in the bottom-left status bar.
+
+### C.3 — Build and run with Docker Desktop
+
+```powershell
+# Dev mode: live-reload + DEBUG logs (recommended for active development)
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+
+# Production image build (to test exactly what would ship)
 docker compose build bot
 docker compose up -d
 ```
+
+> **`--build` is required after every branch switch** — it rebuilds the image from the checked-out code.  
+> Omit `--build` only when you changed `.py` files that are live-mounted; the watchdog reloader restarts the bot automatically without a rebuild.
+
+### C.4 — Monitoring in Docker Desktop
+
+After `docker compose up` you can use the **Docker Desktop UI** instead of the CLI:
+
+- **Containers tab** → expand the `hs-snake` stack → click the `bot` container to view live logs
+- **Click the container name** → open the **Logs** tab for a scrollable, searchable log view
+- **Click ▶ / ■** to start or stop individual containers without touching the terminal
+
+### C.5 — Switching branches while the stack is running
+
+```powershell
+# 1. Stop the running stack (keeps volumes/data intact)
+docker compose down
+
+# 2. Switch branch in VS Code or via terminal
+git checkout other-branch
+
+# 3. Rebuild and restart
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+```
+
+> Logs are written to `./docker/log/bot.log` on the host — visible in VS Code's Explorer panel while the bot is running.
 
 ---
 
@@ -294,7 +348,8 @@ hs-snake/
 │   └── fonts/                  # Belwe.ttf for deck image rendering
 ├── docker/
 │   ├── bot/Dockerfile          # Multi-stage Python image
-│   └── cache/nginx.conf        # Nginx proxy cache config
+│   ├── cache/nginx.conf        # Nginx proxy cache config
+│   └── log/                    # Log file output (bind-mounted into the container)
 ├── docker-compose.yml          # Production stack
 ├── docker-compose.dev.yml      # Development overrides
 ├── requirements.txt
@@ -313,5 +368,5 @@ hs-snake/
 | Bot is online but slash commands do not appear | Global sync delay | Set `DISCORD_GUILD_ID` to your server ID for instant guild-scoped sync |
 | `deckimage` returns no image / error in logs | Card image fetch failed | Check internet access; try `IMAGE_CARD_SIZE=256x` |
 | `cache` container unhealthy | Nginx still starting | Wait 10–15 s; run `docker compose ps` again |
-| Permission denied writing `data/bot.db` | Volume mounted before user created | Rebuild the image: `docker compose build bot` |
+| Permission denied writing `data/bot.db` | `data/` directory missing or wrong ownership | Run `mkdir -p data` in the working directory before `docker compose up` |
 | Message Content Intent error in logs | Intent not enabled in Developer Portal | Go to **Bot → Privileged Gateway Intents** and enable **Message Content Intent** |

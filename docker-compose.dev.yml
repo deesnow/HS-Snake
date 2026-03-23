@@ -6,15 +6,17 @@ services:
     build:
       context: .
       dockerfile: docker/bot/Dockerfile
-      target: builder          # builder stage has gcc/pip tools for live reload
     volumes:
       - ./bot:/app/bot         # Live-mount source
       - ./assets:/app/assets
+      - ./docker/log:/app/logs
+    working_dir: /app
     environment:
       LOG_LEVEL: DEBUG
     command: >
       sh -c "pip install watchdog &&
-             python -m watchdog.watchmedo auto-restart
-               --patterns='*.py'
-               --recursive
-               -- python -m bot.main"
+      python -m watchdog.watchmedo auto-restart
+      --patterns='*.py'
+      --recursive
+      --debug-force-polling
+      -- python -m bot.main"

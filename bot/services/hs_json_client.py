@@ -127,12 +127,17 @@ class HSJsonClient:
         client = await self._client()
         # Try cache
         try:
+            log.debug("GET %s", cache_url)
             resp = await client.get(cache_url)
+            log.debug("← %s %s", resp.status_code, cache_url)
             if resp.status_code == 200:
+                log.debug("cache hit card_id=%s", card_id)
                 return resp.content
         except Exception:
-            log.debug("Cache miss or unavailable for dbfId=%s, falling back", dbf_id)
+            log.debug("cache unavailable for card_id=%s, falling back to upstream", card_id)
         # Fall back to upstream
+        log.debug("GET %s", upstream_url)
         resp = await client.get(upstream_url)
+        log.debug("← %s %s", resp.status_code, upstream_url)
         resp.raise_for_status()
         return resp.content

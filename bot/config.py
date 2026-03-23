@@ -33,6 +33,9 @@ class Settings:
     log_level: int = field(
         default_factory=lambda: getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO)
     )
+    log_file: Optional[str] = field(
+        default_factory=lambda: os.getenv("LOG_FILE")
+    )
 
 
 settings = Settings()

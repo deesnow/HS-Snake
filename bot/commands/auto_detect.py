@@ -120,6 +120,7 @@ class AutoDetectCog(commands.Cog):
             except Exception:
                 continue
 
+            log.info("auto-detect deck code in guild=%s channel=%s user=%s code=%.40s", message.guild.id, message.channel.id, message.author, token)
             # Step 4 — reply in the same channel
             text = build_simple_deck_text(deck, token)
             try:

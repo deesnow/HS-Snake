@@ -153,6 +153,7 @@ class DeckCommands(commands.Cog):
     @app_commands.command(name="deck", description="Show a simple card list for a Hearthstone deck code.")
     @app_commands.describe(code="The Hearthstone deck code to decode")
     async def deck(self, interaction: discord.Interaction, code: str) -> None:
+        log.info("/deck user=%s guild=%s channel=%s code=%.40s", interaction.user, interaction.guild_id, interaction.channel_id, code.strip())
         await interaction.response.defer()
         try:
             deck = await self.decoder.decode(code.strip())
@@ -167,6 +168,7 @@ class DeckCommands(commands.Cog):
     @app_commands.command(name="deckanalyze", description="Show a detailed grouped analysis of a Hearthstone deck.")
     @app_commands.describe(code="The Hearthstone deck code to analyze")
     async def analyzedeck(self, interaction: discord.Interaction, code: str) -> None:
+        log.info("/deckanalyze user=%s guild=%s channel=%s code=%.40s", interaction.user, interaction.guild_id, interaction.channel_id, code.strip())
         await interaction.response.defer()
         try:
             deck = await self.decoder.decode(code.strip())
@@ -181,6 +183,7 @@ class DeckCommands(commands.Cog):
     @app_commands.command(name="deckimage", description="Render a visual image of a Hearthstone deck.")
     @app_commands.describe(code="The Hearthstone deck code to render")
     async def deckimage(self, interaction: discord.Interaction, code: str) -> None:
+        log.info("/deckimage user=%s guild=%s channel=%s code=%.40s", interaction.user, interaction.guild_id, interaction.channel_id, code.strip())
         await interaction.response.defer()
         try:
             deck = await self.decoder.decode(code.strip())

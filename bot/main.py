@@ -11,11 +11,18 @@ from discord.ext import commands
 
 from bot.config import settings
 
-__version__ = "0.2.1"
+__version__ = "0.2.4"
+
+_log_handlers: list[logging.Handler] = [logging.StreamHandler()]
+if settings.log_file:
+    import os as _os
+    _os.makedirs(_os.path.dirname(settings.log_file), exist_ok=True)
+    _log_handlers.append(logging.FileHandler(settings.log_file, encoding="utf-8"))
 
 logging.basicConfig(
     level=settings.log_level,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=_log_handlers,
 )
 log = logging.getLogger(__name__)
 
