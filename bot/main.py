@@ -11,7 +11,7 @@ from discord.ext import commands
 
 from bot.config import settings
 
-__version__ = "0.2.2"
+__version__ = "0.2.3"
 
 _log_handlers: list[logging.Handler] = [logging.StreamHandler()]
 if settings.log_file:
