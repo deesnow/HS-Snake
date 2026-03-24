@@ -193,6 +193,34 @@ Press `Ctrl+C` to stop following logs — the bot keeps running in the backgroun
 
 > Guild settings (SQLite) are persisted in `./data/bot.db` (bind-mounted into the container) and survive restarts and image updates.
 
+### A.8 — Updating production after a merged PR
+
+When a PR is merged into `main`, the CI pipeline builds and pushes a new `ghcr.io/deesnow/hs-snake:latest` image. To deploy it on your production server:
+
+```bash
+# Pull the new image and restart the bot container (zero downtime for the cache)
+docker compose pull bot
+docker compose up -d bot
+```
+
+Or as a single one-liner:
+```bash
+docker compose pull bot && docker compose up -d bot
+```
+
+> - `docker compose pull bot` downloads the new image without stopping anything.
+> - `docker compose up -d bot` recreates only the `bot` container with the new image. The `cache` container is unaffected and keeps running.
+> - `data/bot.db` is bind-mounted and survives the container recreation — no data is lost.
+
+**Verify the update:**
+```bash
+# Check the new image is running
+docker compose ps
+
+# Confirm the version in logs
+docker compose logs --tail=20 bot | grep "logged in"
+```
+
 ---
 
 ## Option B — Run Locally (no Docker)

@@ -29,7 +29,7 @@ class CardCommands(commands.Cog):
             card = await self.hs_client.find_card_by_name(name.strip())
             if card is None:
                 await interaction.followup.send(
-                    f"❌ No card found matching **{name}**.", ephemeral=True
+                    content=f"❌ No card found matching **{name}**.", ephemeral=True
                 )
                 return
 
@@ -39,7 +39,7 @@ class CardCommands(commands.Cog):
 
         except Exception:
             log.exception("Unexpected error in /card")
-            await interaction.followup.send("❌ Something went wrong. Please try again.", ephemeral=True)
+            await interaction.followup.send(content="❌ Something went wrong. Please try again.", ephemeral=True)
 
 
 async def setup(bot: commands.Bot) -> None:

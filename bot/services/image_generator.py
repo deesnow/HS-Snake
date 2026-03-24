@@ -83,11 +83,21 @@ _CONTENT_H = 776 - _CROP_T - _CROP_B   # 629
 _CARD_RATIO = _CONTENT_H / _CONTENT_W   # ≈ 1.395
 
 # ── Label proportions relative to card_w (derived from elise bucket 500) ─
-# original: card_w=500, label=(214,121), offset=(150, 729), card_h=757
+# original: card_w=500, label=(214,121), offset=(150, 650), card_h≈675 (alpha-cropped)
+# The label is pasted BEFORE the card so the card image covers the top of
+# the label; the bottom of the label protrudes below the card, sitting in
+# the gap between rows — matching the Elise reference layout.
+# Our fixed-crop card_h for card_w=500 is 697 px.  Elise label top is at
+# 650 px into a 675 px alpha-cropped card → 650/697 of our card_h.
 _LBL_W_FRAC  = 214 / 500   # ≈ 0.428
-_LBL_H_FRAC  = 121 / 757   # ≈ 0.160  (relative to card_h)
+_LBL_H_FRAC  = 121 / 697   # ≈ 0.174  (relative to our fixed-crop card_h)
 _LBL_DX_FRAC = 150 / 500   # ≈ 0.300
-_LBL_DY_FRAC = 0.88         # place label at 88 % down the card height
+_LBL_DY_FRAC = 650 / 697   # ≈ 0.933  — label top near card bottom, pasted under card
+
+# ── Row gap ───────────────────────────────────────────────────────────
+# The label protrudes ≈ 0.107 × card_h below the card bottom.
+# A gap of 0.13 × card_h ensures it is fully visible between rows.
+ROW_GAP_FRAC = 0.13
 
 
 def _fixed_crop(im: Image.Image) -> Image.Image:
@@ -111,8 +121,9 @@ def _calc_card_size(n: int) -> tuple[int, int, int]:
     for cols in range(1, n + 1):
         card_w = CANVAS_W // cols
         card_h = round(card_w * _CARD_RATIO)
+        row_gap = round(card_h * ROW_GAP_FRAC)
         rows   = math.ceil(n / cols)
-        if rows * card_h <= DUST_Y:
+        if rows * card_h + (rows - 1) * row_gap <= DUST_Y:
             return card_w, card_h, cols
     # Fallback: all cards in one row, minimum width
     card_w = CANVAS_W // n
@@ -196,11 +207,20 @@ class ImageGenerator:
         )
 
         # ── Place cards ───────────────────────────────────────────────
+        row_gap = round(card_h * ROW_GAP_FRAC)
         for idx, (entry, raw) in enumerate(zip(entries, image_data)):
-            # Index-based placement: no wrap trigger, no gap between cards.
-            # Guarantees every card lands within the canvas bounds.
+            # Index-based placement: no wrap trigger.
+            # Row gap leaves space for the count label to protrude below cards.
             x = (idx % cols) * card_w
-            y = (idx // cols) * card_h
+            y = (idx // cols) * (card_h + row_gap)
+
+            # ── Count label — pasted BEFORE the card so the card image
+            #    covers its top; the bottom protrudes below the card frame
+            #    (clear of the tribe/spell-school text area).
+            if entry.count >= 2:
+                label = _load_label(entry.count) if entry.count > 2 else label_default
+                if label:
+                    canvas.paste(label, (x + lbl_dx, y + lbl_dy), mask=label)
 
             if raw:
                 try:
@@ -212,12 +232,6 @@ class ImageGenerator:
                     canvas.paste(im, (x, y), mask=im)
                 except Exception:
                     log.debug("Failed to render card %s", entry.card.card_id)
-
-            # ── Count label overlay ───────────────────────────────────
-            if entry.count >= 2:
-                label = _load_label(entry.count) if entry.count > 2 else label_default
-                if label:
-                    canvas.paste(label, (x + lbl_dx, y + lbl_dy), mask=label)
 
         # ── Dust cost + branding footer ──────────────────────────────────────
         total_dust = sum(_dust_cost(e.card.rarity, e.count) for e in entries)
