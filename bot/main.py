@@ -11,7 +11,7 @@ from discord.ext import commands
 
 from bot.config import settings
 
-__version__ = "0.4.1"
+__version__ = "0.4.2"
 
 _log_handlers: list[logging.Handler] = [logging.StreamHandler()]
 if settings.log_file:
@@ -23,6 +23,7 @@ logging.basicConfig(
     level=settings.log_level,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     handlers=_log_handlers,
+    force=True,
 )
 log = logging.getLogger(__name__)
 

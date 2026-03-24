@@ -154,6 +154,25 @@ async def fetch_leaderboard(
                     )
                     await asyncio.sleep(wait)
                     continue
+                if r.status_code >= 500:
+                    # Transient server-side error (5xx, 6xx) — retry with backoff
+                    if attempt >= len(_RETRY_WAITS):
+                        if on_page_error is not None:
+                            log.error(
+                                "Leaderboard %s/%s page %d permanently failed (%d) — skipping",
+                                region, mode, page, r.status_code,
+                            )
+                            await on_page_error(page)
+                            return []  # skip gracefully
+                        r.raise_for_status()
+                    wait = _RETRY_WAITS[attempt]
+                    log.warning(
+                        "Leaderboard %s/%s page %d got %d — pausing %ds (attempt %d/%d)",
+                        region, mode, page, r.status_code, wait,
+                        attempt + 1, len(_RETRY_WAITS),
+                    )
+                    await asyncio.sleep(wait)
+                    continue
                 r.raise_for_status()
                 return r.json()["leaderboard"]["rows"]
 

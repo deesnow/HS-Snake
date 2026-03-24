@@ -113,6 +113,34 @@ def _table_block(entries) -> str:
     return "```\n" + "\n".join(rows) + "\n```"
 
 
+def _mana_curve_block(deck) -> str:
+    """Render a mana curve as a vertical bar chart in a code block."""
+    curve: dict[str, int] = {}
+    for entry in deck.cards:
+        cost = entry.card.cost
+        key = "7+" if cost >= 7 else str(cost)
+        curve[key] = curve.get(key, 0) + entry.count
+
+    labels = [str(i) for i in range(7)] + ["7+"]
+    counts = [curve.get(lbl, 0) for lbl in labels]
+    max_count = max(counts) or 1
+    bar_height = 8
+
+    rows = []
+    for row in range(bar_height, 0, -1):
+        line = ""
+        for count in counts:
+            filled = round(count / max_count * bar_height)
+            line += " █ " if filled >= row else "   "
+        rows.append(line)
+
+    rows.append("─" * (len(labels) * 3))
+    rows.append("".join(f"{lbl:^3}" for lbl in labels))
+    rows.append("".join(f"{c:^3}" for c in counts))
+
+    return "```\n" + "\n".join(rows) + "\n```"
+
+
 def build_deck_embed(deck) -> discord.Embed:
     """Return the detailed grouped embed (used by /deckanalyze)."""
     total_dust = _total_dust(deck)
@@ -137,6 +165,8 @@ def build_deck_embed(deck) -> discord.Embed:
         if len(block) > 1024:
             block = block[:1020] + "\n```"
         embed.add_field(name=label, value=block, inline=False)
+
+    embed.add_field(name="Mana Curve", value=_mana_curve_block(deck), inline=False)
 
     return embed
 
