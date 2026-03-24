@@ -34,8 +34,8 @@ COPY assets/ ./assets/
 
 # Non-root user for security
 RUN useradd -m botuser \
-    && mkdir /app/data \
-    && chown botuser:botuser /app/data
+    && mkdir /app/data /app/logs \
+    && chown botuser:botuser /app/data /app/logs
 USER botuser
 
 CMD ["python", "-m", "bot.main"]
