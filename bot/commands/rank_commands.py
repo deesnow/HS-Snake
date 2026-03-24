@@ -177,7 +177,7 @@ class RankCommands(commands.Cog):
         mode: Optional[app_commands.Choice[str]] = None,
         region: Optional[app_commands.Choice[str]] = None,
     ) -> None:
-        await interaction.response.send_message("⏳ Looking up your rank...", ephemeral=True)
+        await interaction.response.send_message("⏳ Looking up your rank...", ephemeral=False)
         async with get_db() as db:
             if region:
                 cursor = await db.execute(
