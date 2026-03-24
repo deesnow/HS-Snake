@@ -23,6 +23,7 @@ logging.basicConfig(
     level=settings.log_level,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     handlers=_log_handlers,
+    force=True,
 )
 log = logging.getLogger(__name__)
 
