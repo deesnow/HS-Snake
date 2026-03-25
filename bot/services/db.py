@@ -29,6 +29,35 @@ ldb_current_entries  -- live upsert table; always reflects the latest API data
     rating          INTEGER
     updated_at      TEXT NOT NULL       -- ISO-8601 UTC of last upsert
     PRIMARY KEY (region, mode, rank)
+
+ldb_refresh_log  -- one row per completed refresh run; tracks legend pool size over time
+    id           INTEGER PRIMARY KEY AUTOINCREMENT
+    region       TEXT NOT NULL
+    mode         TEXT NOT NULL
+    season_id    INTEGER NOT NULL
+    legend_count INTEGER NOT NULL  -- total rows in ldb_current_entries after this run
+    is_full      INTEGER NOT NULL  -- 1 = full refresh (all pages), 0 = quick (top-N only)
+    completed_at TEXT NOT NULL     -- ISO-8601 UTC
+
+player_rank_log  -- every time a registered player appears in a refresh page
+    id          INTEGER PRIMARY KEY AUTOINCREMENT
+    discord_id  TEXT NOT NULL
+    region      TEXT NOT NULL
+    mode        TEXT NOT NULL
+    season_id   INTEGER NOT NULL
+    rank        INTEGER NOT NULL
+    rating      INTEGER
+    observed_at TEXT NOT NULL      -- ISO-8601 UTC
+
+player_daily_best  -- best rank per registered player per UTC calendar day (upserted)
+    discord_id  TEXT NOT NULL
+    region      TEXT NOT NULL
+    mode        TEXT NOT NULL
+    season_id   INTEGER NOT NULL
+    date_utc    TEXT NOT NULL      -- YYYY-MM-DD UTC
+    best_rank   INTEGER NOT NULL
+    updated_at  TEXT NOT NULL
+    PRIMARY KEY (discord_id, region, mode, season_id, date_utc)
 """
 import os
 from contextlib import asynccontextmanager
@@ -85,6 +114,44 @@ async def _migrate(db: aiosqlite.Connection) -> None:
 
         CREATE INDEX IF NOT EXISTS idx_ldb_current_btag
             ON ldb_current_entries (region, mode, battletag);
+
+        -- Refresh run audit log.
+        CREATE TABLE IF NOT EXISTS ldb_refresh_log (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            region       TEXT    NOT NULL,
+            mode         TEXT    NOT NULL,
+            season_id    INTEGER NOT NULL,
+            legend_count INTEGER NOT NULL,
+            is_full      INTEGER NOT NULL DEFAULT 0,
+            completed_at TEXT    NOT NULL
+        );
+
+        -- Raw rank observations for every registered player found during a refresh.
+        CREATE TABLE IF NOT EXISTS player_rank_log (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            discord_id  TEXT    NOT NULL,
+            region      TEXT    NOT NULL,
+            mode        TEXT    NOT NULL,
+            season_id   INTEGER NOT NULL,
+            rank        INTEGER NOT NULL,
+            rating      INTEGER,
+            observed_at TEXT    NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_prl
+            ON player_rank_log (discord_id, region, mode, season_id, observed_at DESC);
+
+        -- Daily best rank per registered player (upserted whenever a better rank is observed).
+        CREATE TABLE IF NOT EXISTS player_daily_best (
+            discord_id  TEXT    NOT NULL,
+            region      TEXT    NOT NULL,
+            mode        TEXT    NOT NULL,
+            season_id   INTEGER NOT NULL,
+            date_utc    TEXT    NOT NULL,
+            best_rank   INTEGER NOT NULL,
+            updated_at  TEXT    NOT NULL,
+            PRIMARY KEY (discord_id, region, mode, season_id, date_utc)
+        );
     """)
     await db.commit()
 
