@@ -81,6 +81,10 @@ async def refresh_pages(
     """
     Fetch pages from the Blizzard API and upsert them into ldb_current_entries.
 
+    Also tracks registered players: writes a player_rank_log row whenever a
+    registered battletag appears in a page, and upserts player_daily_best with
+    the best rank seen so far today (UTC).
+
     Pages are written as they arrive — no staging/promotion step. A failed
     page is skipped and its existing rows remain from the previous run.
 
@@ -94,9 +98,27 @@ async def refresh_pages(
     rows_written = 0
 
     async with get_db() as db:
+        # Load all registered battletags for this region once per refresh run.
+        # Map: battletag_lower (name only, no #NNNN) → discord_id
+        reg_cursor = await db.execute(
+            "SELECT discord_id, battletag FROM user_battletags WHERE region = ?",
+            (region.upper(),),
+        )
+        registered: dict[str, str] = {
+            row["battletag"].lower().split("#")[0]: row["discord_id"]
+            for row in await reg_cursor.fetchall()
+        }
 
         async def on_started(season_id: int) -> None:
             nonlocal current_season_id
+            if season_id == 0:
+                # The API occasionally returns a null/missing seasonId (transient
+                # error). Raising here aborts fetch_leaderboard cleanly so the
+                # existing ldb_current_entries data is preserved intact.
+                raise ValueError(
+                    f"API returned season_id=0 for {region}/{mode} "
+                    "— aborting refresh to preserve existing data"
+                )
             current_season_id = season_id
             # When a new season starts, wipe stale entries from prior season.
             await db.execute(
@@ -112,6 +134,7 @@ async def refresh_pages(
             if not page_entries:
                 return
             now = datetime.now(timezone.utc).isoformat()
+            date_utc = now[:10]  # YYYY-MM-DD
             await db.executemany(
                 """
                 INSERT INTO ldb_current_entries
@@ -134,6 +157,46 @@ async def refresh_pages(
             rows_written += len(page_entries)
             log.debug("%s/%s page %d — upserted %d rows", region, mode, page, len(page_entries))
 
+            # ── Track registered players found in this page ───────────────────
+            if not registered:
+                return
+            found_registered = False
+            for entry in page_entries:
+                discord_id = registered.get(entry.battletag)
+                if discord_id is None:
+                    continue
+                found_registered = True
+                log.debug(
+                    "Tracked registered player %s at rank #%d (%s/%s)",
+                    entry.battletag_orig, entry.rank, region, mode,
+                )
+                await db.execute(
+                    """
+                    INSERT INTO player_rank_log
+                        (discord_id, region, mode, season_id, rank, rating, observed_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (discord_id, region.upper(), mode.lower(),
+                     current_season_id, entry.rank, entry.rating, now),
+                )
+                await db.execute(
+                    """
+                    INSERT INTO player_daily_best
+                        (discord_id, region, mode, season_id, date_utc, best_rank, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(discord_id, region, mode, season_id, date_utc) DO UPDATE SET
+                        best_rank  = MIN(best_rank, excluded.best_rank),
+                        updated_at = CASE
+                            WHEN excluded.best_rank < best_rank THEN excluded.updated_at
+                            ELSE updated_at
+                        END
+                    """,
+                    (discord_id, region.upper(), mode.lower(),
+                     current_season_id, date_utc, entry.rank, now),
+                )
+            if found_registered:
+                await db.commit()
+
         async def on_page_error(page: int) -> None:
             log.warning(
                 "%s/%s page %d failed permanently — existing rows kept from previous run",
@@ -147,6 +210,24 @@ async def refresh_pages(
             on_page_error=on_page_error,
             max_page=max_page,
         )
+
+        # ── Write refresh audit log ───────────────────────────────────────────
+        lc_cursor = await db.execute(
+            "SELECT COUNT(*) FROM ldb_current_entries WHERE region = ? AND mode = ?",
+            (region.upper(), mode.lower()),
+        )
+        legend_count = (await lc_cursor.fetchone())[0]
+        await db.execute(
+            """
+            INSERT INTO ldb_refresh_log
+                (region, mode, season_id, legend_count, is_full, completed_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (region.upper(), mode.lower(), current_season_id,
+             legend_count, 1 if max_page is None else 0,
+             datetime.now(timezone.utc).isoformat()),
+        )
+        await db.commit()
 
     log.info(
         "refresh_pages %s/%s max_page=%s — upserted %d rows (season %s)",

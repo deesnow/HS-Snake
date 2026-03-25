@@ -2,184 +2,52 @@
 
 ---
 
-## 1. Card Search with Interactive Filters
+## Season Ranking Score
 
-### Goal
-Players can search the full Hearthstone card database using filters (mana cost, class, card type). Filters are presented as interactive Discord UI components — no need to memorise command syntax.
+**Goal:** Track each registered player's best daily legend rank throughout a season and compute a weighted season score that accounts for the size of the legend pool each day.
 
-### Discord.py Capabilities & Constraints
-- **`discord.ui.View`** — attaches interactive components to a message (buttons, dropdowns)
-- **`discord.ui.Select`** — dropdown with up to 25 options per menu
-- **`discord.ui.Button`** — clickable button
-- **Max 5 action rows** per message; **max 5 components per row**
-- Views time out (default 180 s); must handle `on_timeout` gracefully
-- Interaction responses must arrive within **3 seconds** (use `defer()` for slow operations)
+Calculation: https://gemini.google.com/share/2ec4311c05ac
 
-### Proposed Flow
+### Background / Design
 
-```
-/cardsearch
-    └─► Bot sends a message with 3 Select dropdowns + a 🔍 Search button:
-        ┌─────────────────────────────────────────────────────────┐
-        │  🔎 Card Search                                          │
-        │  ┌──────────────────┐  ┌──────────────────┐            │
-        │  │ Mana Cost ▾      │  │ Class ▾           │            │
-        │  └──────────────────┘  └──────────────────┘            │
-        │  ┌──────────────────┐                                    │
-        │  │ Card Type ▾      │  [ 🔍 Search ]  [ ✖ Cancel ]     │
-        │  └──────────────────┘                                    │
-        └─────────────────────────────────────────────────────────┘
-
-    └─► Player sets filters, clicks Search
-    └─► Bot edits the message with a paginated result list (10 cards/page)
-        with ◀ Prev / ▶ Next buttons
-```
-
-### Filter Options
-| Filter | Options |
-|---|---|
-| Mana Cost | Any, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10+ |
-| Class | Any, Druid, Hunter, Mage, Paladin, Priest, Rogue, Shaman, Warlock, Warrior, Demon Hunter, Death Knight, Neutral |
-| Card Type | Any, Minion, Spell, Weapon, Hero, Location |
-
-### Result Display
-- Each page shows up to 10 cards as text lines: `⚪ Wisp`
-- Optional: clicking a card name button triggers `/card <name>` to show its image
-- Results capped at 100 to avoid hitting Discord message size limits
-
-### Implementation Notes
-- Filter state stored inside the `View` instance (per interaction, ephemeral)
-- Search runs against the in-memory `_name_index` / `_card_db` already loaded by `HSJsonClient`
-- Use `ephemeral=True` so filter UI is only visible to the requesting user
-- New file: `bot/commands/search_commands.py`, new cog `SearchCommands`
-
----
-
-## 2. Player Legend Rank Query
-
-### Goal
-Players can query their current Hearthstone legend rank directly in Discord — no parameters needed once their BattleTag is registered. Optionally specify a game mode to narrow the output.
-
-### Data Source — Blizzard Official Public API
-
-```
-GET https://hearthstone.blizzard.com/en-us/api/community/leaderboardsData
-    ?region={region}
-    &leaderboardId={mode}
-    &page={page}
-    [&seasonId={id}]   ← optional, omit for current season
-```
-
-**Parameters:**
-
-| Parameter | Values |
-|---|---|
-| `region` | `US`, `EU`, `AP` |
-| `leaderboardId` | `standard`, `wild`, `classic`, `battlegrounds`, `battlegroundsduo`, `arena`, `twist` |
-| `page` | 1-based integer; response includes `pagination.totalPages` |
-
-**Response shape (per page, 25 entries):**
-```json
-{
-  "leaderboard": {
-    "rows": [
-      { "rank": 1, "accountid": "PlayerName#1234", "rating": null }
-    ],
-    "pagination": { "totalPages": 40 }
-  },
-  "season": { "seasonId": 134, "leaderboardId": "standard", "region": "EU" }
-}
-```
-
-> Player names are returned as bare BattleTag `Name#NNNN` strings.  
-> No auth token required — this endpoint is fully public.
-
-### Caching Strategy
-- Fetch and store all pages for a (region, mode, seasonId) combination as a single **snapshot** in SQLite.
-- Cache TTL: **10–15 minutes** — refresh only if snapshot is older than TTL when queried.
-- Schema additions to existing `bot/services/db.py`:
-  ```sql
-  CREATE TABLE ldb_snapshots (
-      id          INTEGER PRIMARY KEY,
-      region      TEXT NOT NULL,
-      mode        TEXT NOT NULL,
-      season_id   INTEGER NOT NULL,
-      fetched_at  TEXT NOT NULL  -- ISO-8601 UTC
-  );
-
-  CREATE TABLE ldb_entries (
-      snapshot_id INTEGER NOT NULL REFERENCES ldb_snapshots(id),
-      rank        INTEGER NOT NULL,
-      battletag   TEXT NOT NULL,   -- normalised to lower-case for lookup
-      rating      INTEGER,
-      PRIMARY KEY (snapshot_id, rank)
-  );
+- Early in a season very few players reach legend, so a top rank is harder to hold — the legend pool size acts as a weight.
+- Each day the player's **best rank** for that UTC calendar day is snapshotted.
+- A **day score** is computed as a percentile (higher = better):
   ```
-- Normalise stored BattleTag to **lower-case** for case-insensitive lookup; display the original casing from the API in output.
+  day_score = (legend_count - best_rank + 1) / legend_count   →  0.0 … 1.0
+  ```
+- The **season score** is a cumulative weighted average updated each day:
+  ```
+  total_weighted_score += day_score × legend_count
+  total_weight         += legend_count
+  season_score          = total_weighted_score / total_weight
+  ```
+- Keyed per `(discord_id, region, mode, season_id)`.
+- Season rollover detected via existing `season_id` from `ldb_current_entries`.
 
-### BattleTag Registration
-Players register once per Discord user so `/rank` needs no arguments thereafter.
+### New DB Tables
 
-```sql
-CREATE TABLE user_battletags (
-    discord_id  TEXT PRIMARY KEY,
-    battletag   TEXT NOT NULL,   -- original casing
-    region      TEXT NOT NULL    -- default region: EU
-);
-```
+- **`rank_daily_snapshots`** — `(discord_id, region, mode, season_id, snapshot_date, best_rank, legend_count)`
+- **`rank_season_scores`** — `(discord_id, region, mode, season_id, season_score, days_counted, total_weight, total_weighted_score, updated_at)`
 
-- `/rankset battletag:<Name#1234> region:<EU|US|AP>` — registers / updates the caller's BattleTag
-- Stored in existing SQLite DB; no guild scope (user-level, persists across servers)
+### Tasks
 
-### Commands
+- [ ] **SR-01** — Add `rank_daily_snapshots` and `rank_season_scores` tables to `db.py` migrations
+- [ ] **SR-02** — Add `season_score.py` service: functions to record daily snapshot and recalculate season score
+- [ ] **SR-03** — Add a daily background task (fires once at ~23:59 UTC) in `rank_commands.py` (or a new cog) that:
+  - Reads all distinct `(discord_id, region, mode)` registrations from `user_battletags`
+  - Looks up their current rank and total legend count from `ldb_current_entries`
+  - Writes a snapshot row; skips players not found in top-N (or records as absent)
+  - Recalculates and upserts the season score row
+- [ ] **SR-04** — Handle season rollover: when `season_id` changes, do not carry over score; new season starts fresh
+- [ ] **SR-05** — Handle missing days gracefully (player not yet in legend or outside top-N scan range)
+- [ ] **SR-06** — Implement `/seasonscore [region] [mode]` command — shows the user's current season score, days counted, and best rank achieved
+- [ ] **SR-07** — (Optional) `/seasonleaderboard [region] [mode]` — top-N season scores among all registered users in the server
 
-#### `/rank [mode]`
-- `mode` is **optional** — choices: `standard`, `wild`, `bg` (maps to `battlegrounds`)
-- If omitted: shows **Standard** and **Wild** ranks side by side
-- If specified: shows only the requested mode
-- Requires prior `/rankset`; if not registered → ephemeral prompt to run `/rankset`
+### Open Questions
 
-**Default output (no mode):**
-```
-🏆 PlayerName#1234 — EU Legend  ·  Season 134
-
-  Standard  │  Wild
-  ─────────────────
-    #842     │  #1205
-```
-
-**Mode-specific output:**
-```
-🏆 PlayerName#1234 — EU Legend  ·  Season 134
-Battlegrounds  →  #317
-```
-
-#### `/rankset battletag:<Name#1234> region:<EU|US|AP>`
-- Validates format with regex `^\w+#\d+$`
-- Upserts into `user_battletags`
-- Confirms with ephemeral reply
-
-### Implementation Plan
-
-| Step | File | Description |
-|---|---|---|
-| 1 | `bot/services/db.py` | Add `ldb_snapshots`, `ldb_entries`, `user_battletags` tables to schema |
-| 2 | `bot/services/leaderboard_client.py` | Async HTTP client — fetch all pages for (region, mode), return flat list of `(rank, battletag, rating)` |
-| 3 | `bot/services/leaderboard_cache.py` | Check snapshot freshness, fetch+store if stale, return entries from DB; expose `lookup(battletag, region, mode)` |
-| 4 | `bot/commands/rank_commands.py` | `/rank [mode]` + `/rankset` slash commands; new cog `RankCommands` |
-| 5 | `bot/main.py` | Load `bot.commands.rank_commands` extension |
-
-### Edge Cases
-- Player not on leaderboard (not legend this season) → "Not found in Top X legend this season."
-- API pagination failure (network error mid-fetch) → log warning, return stale cache if available
-- BattleTag name changes → user must re-run `/rankset`
-- CN region uses a different endpoint (`webapi.blizzard.cn`) — out of scope for now
+- **Timezone handling:** snapshot fires at a fixed UTC time. Players in different timezones may perceive this as slightly unfair at day boundaries — document the UTC cutoff clearly in the command output.
+- **Top-N gap:** current leaderboard cache only guarantees ~top-500 for Standard/Wild. Players below this threshold are invisible — decide whether to expand the cache or mark the day as "unranked".
+- **Multi-mode:** decide whether a combined cross-mode score is useful or if per-mode scores are sufficient.
 
 ---
-
-## Priority Order
-
-| # | Feature | Complexity |
-|---|---|---|
-| 1 | Card Search UI | Medium |
-| 2 | Player Rank Query | Medium |
