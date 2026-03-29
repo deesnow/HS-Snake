@@ -1,5 +1,5 @@
 # Development overrides — mounts local source for live reload
-# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 
 services:
   bot:
@@ -20,12 +20,10 @@ services:
       POSTGRES_PASSWORD: hs-snake_password
       POSTGRES_DB: hs-snake_db
     command: >
-      sh -c "pip install watchdog &&
       python -m watchdog.watchmedo auto-restart
       --patterns='*.py'
       --recursive
       --debug-force-polling
-      -- python -m bot.main"
-
- 
-
+      -- python -m bot.main
+    networks:
+      - internal

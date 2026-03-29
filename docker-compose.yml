@@ -53,6 +53,8 @@ services:
       - ./pgdata:/var/lib/postgresql/data
     ports:
       - "5432:5432"
+    networks:
+      - internal
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U hs-snake_user -d hs-snake_db"]
       interval: 10s

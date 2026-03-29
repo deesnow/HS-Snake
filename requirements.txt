@@ -5,3 +5,4 @@ hearthstone>=9.0.0
 python-dotenv==1.0.1
 asyncpg>=0.29.0
 numpy>=1.26.0
+watchdog>=4.0.0

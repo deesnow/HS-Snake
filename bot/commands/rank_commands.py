@@ -195,12 +195,14 @@ class RankCommands(commands.Cog):
                     "WHERE discord_id = $1 AND region = $2 ORDER BY region",
                     str(interaction.user.id), region.value,
                 )
+                log.debug("/rank: user=%s region=%s rows=%r", interaction.user.id, region.value, rows)
             else:
                 rows = await conn.fetch(
                     "SELECT region, battletag FROM user_battletags "
                     "WHERE discord_id = $1 ORDER BY region",
                     str(interaction.user.id),
                 )
+                log.debug("/rank: user=%s all regions rows=%r", interaction.user.id, rows)
         if not rows:
             tip = f"**{region.value}**" if region else "any region"
             await interaction.edit_original_response(
@@ -213,8 +215,10 @@ class RankCommands(commands.Cog):
                 self._build_section(row["battletag"], row["region"], mode, discord_id)
                 for row in rows
             ])
+            log.debug("/rank: user=%s sections=%r", interaction.user.id, sections)
             await interaction.edit_original_response(content="\n\n".join(sections))
         except RuntimeError as exc:
+            log.exception("/rank: user=%s RuntimeError: %s", interaction.user.id, exc)
             await interaction.edit_original_response(content=f"⏳ {exc}")
         except Exception:
             log.exception("/rank lookup failed for user=%s", interaction.user)
@@ -271,7 +275,7 @@ class RankCommands(commands.Cog):
         return (
             f"{header}\n"
             f"{mode_label}  ->  {rank_str}\n"
-            f"Season Score: {season_score}   Days Counted: {days_counted}   Best Rank: {best_rank_str}   Today's DPS: {today_dps_str}"
+            f"Season Score: {season_score}   Days Counted: {days_counted}   Best Rank: {best_rank_str}   Today's Score: {today_dps_str}"
         )
 
     async def _section_default(self, battletag, region, discord_id):
@@ -347,7 +351,7 @@ class RankCommands(commands.Cog):
         std_dps       = _dps(std_today_dps)
         wild_dps      = _dps(wild_today_dps)
 
-        label_dps = "Today's DPS"
+        label_dps = "Today's Score"
         w = max(len(label_dps), len(std_current), len(wild_current),
                 len(std_best_str), len(wild_best_str), len(std_score), len(wild_score),
                 len(std_dps), len(wild_dps), 8)

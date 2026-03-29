@@ -5,6 +5,7 @@ Schema
 ------
 Update needed here
 """
+import asyncio
 import os
 from contextlib import asynccontextmanager
 
@@ -17,27 +18,29 @@ _DB_PASSWORD = os.getenv("POSTGRES_PASSWORD")
 _DB_NAME = os.getenv("POSTGRES_DB")
 
 _pool = None
+_pool_lock = asyncio.Lock()
 
 async def init_db_pool():
     global _pool
-    if _pool is None:
-        _pool = await asyncpg.create_pool(
-            host=_DB_HOST,
-            port=_DB_PORT,
-            user=_DB_USER,
-            password=_DB_PASSWORD,
-            database=_DB_NAME,
-            min_size=1,
-            max_size=5,
-        )
-        async with _pool.acquire() as conn:
-            await _migrate(conn)
+    async with _pool_lock:
+        if _pool is None:
+            _pool = await asyncpg.create_pool(
+                host=_DB_HOST,
+                port=_DB_PORT,
+                user=_DB_USER,
+                password=_DB_PASSWORD,
+                database=_DB_NAME,
+                min_size=2,
+                max_size=15,
+            )
+            async with _pool.acquire() as conn:
+                await _migrate(conn)
 
 @asynccontextmanager
 async def get_db():
     if _pool is None:
         await init_db_pool()
-    async with _pool.acquire() as conn:
+    async with _pool.acquire(timeout=10) as conn:
         yield conn
 
 
