@@ -17,7 +17,7 @@ This document outlines the steps required to migrate the bot's database from SQL
 - [x] Import data into PostgreSQL tables.
 
 ### 3. Code Refactoring
-- [ ] Replace `aiosqlite` with an async PostgreSQL driver (e.g., `asyncpg` or `databases[postgresql]`).
+- [x] Replace `aiosqlite` with an async PostgreSQL driver (e.g., `asyncpg` or `databases[postgresql]`).
 - [ ] Update all database access logic to use PostgreSQL connections and SQL dialect.
 - [ ] Update connection settings to use environment variables for PostgreSQL.
 

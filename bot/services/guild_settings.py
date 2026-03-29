@@ -1,5 +1,5 @@
 """
-Guild settings CRUD — thin async wrapper around the SQLite schema.
+Guild settings CRUD — async wrapper using asyncpg (PostgreSQL).
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
@@ -18,15 +18,14 @@ class GuildSettings:
 
 
 async def load(guild_id: int) -> GuildSettings:
-    async with get_db() as db:
-        row = await (await db.execute(
-            "SELECT * FROM guild_settings WHERE guild_id = ?", (guild_id,)
-        )).fetchone()
-
+    async with get_db() as conn:
+        row = await conn.fetchrow(
+            "SELECT * FROM guild_settings WHERE guild_id = $1", guild_id
+        )
         channels = [
-            r["channel_id"] for r in await (await db.execute(
-                "SELECT channel_id FROM monitored_channels WHERE guild_id = ?", (guild_id,)
-            )).fetchall()
+            r["channel_id"] for r in await conn.fetch(
+                "SELECT channel_id FROM monitored_channels WHERE guild_id = $1", guild_id
+            )
         ]
 
     if row is None:
@@ -42,51 +41,48 @@ async def load(guild_id: int) -> GuildSettings:
 
 
 async def set_admin_role(guild_id: int, role_id: int) -> None:
-    async with get_db() as db:
-        await db.execute(
+    async with get_db() as conn:
+        await conn.execute(
             """INSERT INTO guild_settings (guild_id, admin_role_id)
-               VALUES (?, ?)
-               ON CONFLICT(guild_id) DO UPDATE SET admin_role_id = excluded.admin_role_id""",
-            (guild_id, role_id),
+               VALUES ($1, $2)
+               ON CONFLICT (guild_id) DO UPDATE SET admin_role_id = EXCLUDED.admin_role_id""",
+            guild_id, role_id,
         )
-        await db.commit()
 
 
 async def set_auto_detect(guild_id: int, enabled: bool) -> None:
-    async with get_db() as db:
-        await db.execute(
+    async with get_db() as conn:
+        await conn.execute(
             """INSERT INTO guild_settings (guild_id, auto_detect)
-               VALUES (?, ?)
-               ON CONFLICT(guild_id) DO UPDATE SET auto_detect = excluded.auto_detect""",
-            (guild_id, int(enabled)),
+               VALUES ($1, $2)
+               ON CONFLICT (guild_id) DO UPDATE SET auto_detect = EXCLUDED.auto_detect""",
+            guild_id, int(enabled),
         )
-        await db.commit()
 
 
 async def set_all_channels(guild_id: int, enabled: bool) -> None:
-    async with get_db() as db:
-        await db.execute(
+    async with get_db() as conn:
+        await conn.execute(
             """INSERT INTO guild_settings (guild_id, all_channels)
-               VALUES (?, ?)
-               ON CONFLICT(guild_id) DO UPDATE SET all_channels = excluded.all_channels""",
-            (guild_id, int(enabled)),
+               VALUES ($1, $2)
+               ON CONFLICT (guild_id) DO UPDATE SET all_channels = EXCLUDED.all_channels""",
+            guild_id, int(enabled),
         )
-        await db.commit()
 
 
 async def add_channel(guild_id: int, channel_id: int) -> None:
-    async with get_db() as db:
-        await db.execute(
-            """INSERT OR IGNORE INTO monitored_channels (guild_id, channel_id) VALUES (?, ?)""",
-            (guild_id, channel_id),
+    async with get_db() as conn:
+        await conn.execute(
+            """INSERT INTO monitored_channels (guild_id, channel_id)
+               VALUES ($1, $2)
+               ON CONFLICT DO NOTHING""",
+            guild_id, channel_id,
         )
-        await db.commit()
 
 
 async def remove_channel(guild_id: int, channel_id: int) -> None:
-    async with get_db() as db:
-        await db.execute(
-            "DELETE FROM monitored_channels WHERE guild_id = ? AND channel_id = ?",
-            (guild_id, channel_id),
+    async with get_db() as conn:
+        await conn.execute(
+            "DELETE FROM monitored_channels WHERE guild_id = $1 AND channel_id = $2",
+            guild_id, channel_id,
         )
-        await db.commit()
