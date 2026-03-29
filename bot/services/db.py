@@ -72,6 +72,7 @@ async def get_db():
     """Async context manager that yields an open, migrated aiosqlite connection."""
     os.makedirs(os.path.dirname(_DB_PATH), exist_ok=True)
     async with aiosqlite.connect(_DB_PATH) as db:
+        await db.execute("PRAGMA journal_mode=WAL;")
         db.row_factory = aiosqlite.Row
         await _migrate(db)
         yield db

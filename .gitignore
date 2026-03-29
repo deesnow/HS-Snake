@@ -14,6 +14,7 @@ env/
 # Docker volumes / data
 data/
 card-cache/
+pgdata/
 
 # IDE
 .vscode/

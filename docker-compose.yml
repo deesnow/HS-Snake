@@ -7,12 +7,19 @@ services:
     env_file: .env
     environment:
       LOG_FILE: /app/logs/bot.log
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: hs-snake_user
+      POSTGRES_PASSWORD: hs-snake_password
+      POSTGRES_DB: hs-snake_db
     depends_on:
       cache:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
     volumes:
       - ./data:/app/data
-      - ./docker/log:/app/logs
+      - ./log:/app/logs
     restart: unless-stopped
     networks:
       - internal
@@ -22,7 +29,7 @@ services:
     image: nginx:1.27-alpine
     volumes:
       - ./docker/cache/nginx.conf:/etc/nginx/nginx.conf:ro
-      - card-cache:/var/cache/nginx/cards
+      - ./docker/cache/cards:/var/cache/nginx/cards
     restart: unless-stopped
     networks:
       - internal
@@ -33,9 +40,27 @@ services:
       retries: 3
       start_period: 10s
 
-volumes:
-  card-cache:
+  # ── PgSQL DB service ─────────────────────────────────────────
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: hs-snake_user
+      POSTGRES_PASSWORD: hs-snake_password
+      POSTGRES_DB: hs-snake_db
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+
+
 
 networks:
   internal:
     driver: bridge
+
+
+
+

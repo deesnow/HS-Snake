@@ -2,7 +2,7 @@
 Service for calculating and updating season scores for each player.
 """
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from bot.services.db import get_db
 
 log = logging.getLogger(__name__)
@@ -27,7 +27,6 @@ async def recalculate_season_score(discord_id: str, region: str, mode: str, seas
             days_counted = 0
             season_score = 0.0
         else:
-            from datetime import datetime, timedelta
             d1 = datetime.strptime(max_date, "%Y-%m-%d")
             # min_day is the first day of the month of max_day
             d0 = d1.replace(day=1)

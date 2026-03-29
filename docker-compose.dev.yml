@@ -7,12 +7,18 @@ services:
       context: .
       dockerfile: docker/bot/Dockerfile
     volumes:
-      - ./bot:/app/bot         # Live-mount source
+      - ./bot:/app/bot
       - ./assets:/app/assets
-      - ./docker/log:/app/logs
+      - ./log:/app/logs
+      - ./data:/app/data
     working_dir: /app
     environment:
       LOG_LEVEL: DEBUG
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: hs-snake_user
+      POSTGRES_PASSWORD: hs-snake_password
+      POSTGRES_DB: hs-snake_db
     command: >
       sh -c "pip install watchdog &&
       python -m watchdog.watchmedo auto-restart
@@ -20,3 +26,6 @@ services:
       --recursive
       --debug-force-polling
       -- python -m bot.main"
+
+ 
+
