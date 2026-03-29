@@ -194,6 +194,37 @@ async def refresh_pages(
                     (discord_id, region.upper(), mode.lower(),
                      current_season_id, date_utc, entry.rank, now),
                 )
+
+                # Calculate and upsert DPS for this player for today
+                # Get legend_count for this region/mode/season (count of ldb_current_entries)
+                lc_cursor = await db.execute(
+                    "SELECT COUNT(*) FROM ldb_current_entries WHERE region = ? AND mode = ? AND season_id = ?",
+                    (region.upper(), mode.lower(), current_season_id),
+                )
+                legend_count = (await lc_cursor.fetchone())[0]
+                best_rank = entry.rank
+                if legend_count > 0:
+                    import math
+                    dps = math.log10(legend_count) * ((legend_count - best_rank + 1) / legend_count) * 100
+                else:
+                    dps = 0.0
+                await db.execute(
+                    """
+                    INSERT INTO player_daily_dps
+                        (discord_id, region, mode, season_id, date_utc, dps, best_rank, legend_count, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(discord_id, region, mode, season_id, date_utc) DO UPDATE SET
+                        dps = excluded.dps,
+                        best_rank = excluded.best_rank,
+                        legend_count = excluded.legend_count,
+                        updated_at = excluded.updated_at
+                    """,
+                    (discord_id, region.upper(), mode.lower(), current_season_id, date_utc, dps, best_rank, legend_count, now),
+                )
+
+                # Immediately recalculate and upsert season score for this player
+                from bot.services.season_score import recalculate_season_score
+                await recalculate_season_score(discord_id, region.upper(), mode.lower(), current_season_id)
             if found_registered:
                 await db.commit()
 

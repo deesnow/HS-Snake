@@ -104,6 +104,52 @@ class RankCommands(commands.Cog):
             self._quick_refresh.start()
             self._quick_refresh_started = True
 
+
+
+
+    @app_commands.command(
+        name="rankset",
+        description="Register your BattleTag for a region. Run once per region you play in.",
+    )
+    @app_commands.describe(
+        battletag="Your BattleTag for this region, e.g. Player#1234",
+        region="Region: EU, US or AP",
+    )
+    @app_commands.choices(region=_REGION_CHOICES)
+    async def rankset(
+        self,
+        interaction: discord.Interaction,
+        battletag: str,
+        region: app_commands.Choice[str],
+    ) -> None:
+        bt = battletag.strip()
+        if not _BATTLETAG_RE.match(bt):
+            await interaction.response.send_message(
+                "❌ Invalid BattleTag format. Use `Name#1234`.",
+                ephemeral=True,
+            )
+            return
+        async with get_db() as db:
+            await db.execute(
+                """
+                INSERT INTO user_battletags (discord_id, region, battletag)
+                VALUES (?, ?, ?)
+                ON CONFLICT(discord_id, region) DO UPDATE SET battletag=excluded.battletag
+                """,
+                (str(interaction.user.id), region.value, bt),
+            )
+            await db.commit()
+        log.info("/rankset user=%s battletag=%r region=%s", interaction.user, bt, region.value)
+        await interaction.response.send_message(
+            f"✅ Registered **{bt}** for **{region.value}**. "
+            "Use `/rank` to check your rank, or `/rankset` again for another region.",
+            ephemeral=True,
+        )
+
+
+
+
+
     @app_commands.command(
         name="rankremove",
         description="Remove your registered BattleTag for a specific region.",
@@ -189,6 +235,27 @@ class RankCommands(commands.Cog):
 
     async def _section_single(self, battletag, region, mode, mode_label, discord_id):
         entry, season_id = await self._fetch_entry(battletag, region, mode, discord_id)
+        # Fetch season score, days counted, and best rank
+        async with get_db() as db:
+            cursor = await db.execute(
+                """
+                SELECT season_score, days_counted FROM player_season_score
+                WHERE discord_id = ? AND region = ? AND mode = ? AND season_id = ?
+                """,
+                (discord_id, region, mode, season_id),
+            )
+            season_row = await cursor.fetchone()
+            best_rank_row = await db.execute(
+                """
+                SELECT MIN(best_rank) as best_rank FROM player_daily_dps
+                WHERE discord_id = ? AND region = ? AND mode = ? AND season_id = ?
+                """,
+                (discord_id, region, mode, season_id),
+            )
+            best_rank_result = await best_rank_row.fetchone()
+        season_score = f"{season_row['season_score']:.2f}" if season_row else "-"
+        days_counted = f"{season_row['days_counted']}" if season_row else "-"
+        best_rank = f"{best_rank_result['best_rank']}" if best_rank_result and best_rank_result['best_rank'] is not None else "-"
         header = f"🏆 **{battletag}** — {region}  ·  Season {season_id}"
         if entry is None:
             rank_str = "_Not found in top ranks this season._"
@@ -196,26 +263,76 @@ class RankCommands(commands.Cog):
             rank_str = f"**#{entry.rank}**"
             if entry.rating:
                 rank_str += f"  (MMR {entry.rating})"
-        return f"{header}\n{mode_label}  ->  {rank_str}"
+        return (
+            f"{header}\n"
+            f"{mode_label}  ->  {rank_str}\n"
+            f"Season Score: {season_score}   Days Counted: {days_counted}   Best Rank: {best_rank}"
+        )
 
     async def _section_default(self, battletag, region, discord_id):
-        (std_entry, std_season), (wild_entry, _) = await asyncio.gather(
+        (std_entry, std_season), (wild_entry, wild_season) = await asyncio.gather(
             self._fetch_entry(battletag, region, "standard", discord_id),
             self._fetch_entry(battletag, region, "wild", discord_id),
         )
 
-        def _r(e):
-            return f"#{e.rank}" if e else "-"
+        async with get_db() as db:
+            # Standard
+            std_row = await db.execute(
+                """
+                SELECT season_score, days_counted FROM player_season_score
+                WHERE discord_id = ? AND region = ? AND mode = ? AND season_id = ?
+                """,
+                (discord_id, region, "standard", std_season),
+            )
+            std_season_row = await std_row.fetchone()
+            std_best_row = await db.execute(
+                """
+                SELECT MIN(best_rank) as best_rank FROM player_daily_dps
+                WHERE discord_id = ? AND region = ? AND mode = ? AND season_id = ?
+                """,
+                (discord_id, region, "standard", std_season),
+            )
+            std_best_result = await std_best_row.fetchone()
+            # Wild
+            wild_row = await db.execute(
+                """
+                SELECT season_score, days_counted FROM player_season_score
+                WHERE discord_id = ? AND region = ? AND mode = ? AND season_id = ?
+                """,
+                (discord_id, region, "wild", wild_season),
+            )
+            wild_season_row = await wild_row.fetchone()
+            wild_best_row = await db.execute(
+                """
+                SELECT MIN(best_rank) as best_rank FROM player_daily_dps
+                WHERE discord_id = ? AND region = ? AND mode = ? AND season_id = ?
+                """,
+                (discord_id, region, "wild", wild_season),
+            )
+            wild_best_result = await wild_best_row.fetchone()
 
-        std_str  = _r(std_entry)
-        wild_str = _r(wild_entry)
-        w = max(len(std_str), len(wild_str), 8)
+        def _current(e):
+            return f"#{e.rank}" if e else "-"
+        def _best(r):
+            return f"#{r['best_rank']}" if r and r['best_rank'] is not None else "-"
+        def _score(r):
+            return f"{r['season_score']:.2f}" if r else "-"
+
+        std_current = _current(std_entry)
+        wild_current = _current(wild_entry)
+        std_best = _best(std_best_result)
+        wild_best = _best(wild_best_result)
+        std_score = _score(std_season_row)
+        wild_score = _score(wild_season_row)
+        w = max(len("Current Rank"), len(std_current), len(wild_current), len(std_best), len(wild_best), len(std_score), len(wild_score), 8)
         return "\n".join([
             f"🏆 **{battletag}** — {region}  ·  Season {std_season}",
             "```",
-            f"  {'Standard':<{w}}   Wild",
-            "  " + "-" * (w + 8),
-            f"  {std_str:<{w}}   {wild_str}",
+            f"  {'':<{w}}   Standard   Wild",
+            f"  {'-'*w}   {'-'*8}   {'-'*8}",
+            f"  {'Current Rank':<{w}}   {std_current:<8}   {wild_current:<8}",
+            f"  {'Best Rank':<{w}}   {std_best:<8}   {wild_best:<8}",
+            f"  {'Season Score':<{w}}   {std_score:<8}   {wild_score:<8}",
             "```",
         ])
 

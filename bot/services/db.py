@@ -152,6 +152,32 @@ async def _migrate(db: aiosqlite.Connection) -> None:
             updated_at  TEXT    NOT NULL,
             PRIMARY KEY (discord_id, region, mode, season_id, date_utc)
         );
+
+        -- Daily DPS per player per day (new for DPS/Season Score feature)
+        CREATE TABLE IF NOT EXISTS player_daily_dps (
+            discord_id  TEXT    NOT NULL,
+            region      TEXT    NOT NULL,
+            mode        TEXT    NOT NULL,
+            season_id   INTEGER NOT NULL,
+            date_utc    TEXT    NOT NULL,
+            dps         REAL    NOT NULL,
+            best_rank   INTEGER NOT NULL,
+            legend_count INTEGER NOT NULL,
+            updated_at  TEXT    NOT NULL,
+            PRIMARY KEY (discord_id, region, mode, season_id, date_utc)
+        );
+
+        -- Season score per player per season (new for DPS/Season Score feature)
+        CREATE TABLE IF NOT EXISTS player_season_score (
+            discord_id   TEXT    NOT NULL,
+            region       TEXT    NOT NULL,
+            mode         TEXT    NOT NULL,
+            season_id    INTEGER NOT NULL,
+            season_score REAL    NOT NULL,
+            days_counted INTEGER NOT NULL,
+            updated_at   TEXT    NOT NULL,
+            PRIMARY KEY (discord_id, region, mode, season_id)
+        );
     """)
     await db.commit()
 
