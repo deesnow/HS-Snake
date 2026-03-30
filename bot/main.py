@@ -5,13 +5,14 @@ Loads all command cogs and connects to Discord.
 """
 import asyncio
 import logging
+import os
 
 import discord
 from discord.ext import commands
 
 from bot.config import settings
 
-__version__ = "0.5.0"
+__version__ = os.getenv("BOT_VERSION", "dev")
 
 _log_handlers: list[logging.Handler] = [logging.StreamHandler()]
 if settings.log_file:
