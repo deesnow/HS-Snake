@@ -2,7 +2,7 @@ name: Publish Docker Image
 
 on:
   push:
-    branches: [main]          # pushes to main → :latest tag
+    branches: [main, rc]      # pushes to main → :latest, rc → :rc tag
     tags: ['v*.*.*']          # version tags → :v0.2.0 + :0.2 + :latest
 
 jobs:
@@ -32,6 +32,7 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=rc,enable=${{ github.ref == 'refs/heads/rc' }}
 
       - name: Build and push
         uses: docker/build-push-action@v6

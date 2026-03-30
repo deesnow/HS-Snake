@@ -1,7 +1,7 @@
 """
 Leaderboard cache layer.
 
-Wraps leaderboard_client with SQLite persistence using a live upsert table
+Wraps leaderboard_client with PostgreSQL persistence using a live upsert table
 (ldb_current_entries). Each page is written immediately on arrival; no
 snapshot promotion needed. Partial data from previous runs is always visible
 to user queries and stays valid until overwritten.
@@ -12,6 +12,7 @@ Public API:
     refresh_pages(region, mode, max_page)   -> (count, season_id, fetched_at)   — API + upsert
 """
 import logging
+import math
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -20,6 +21,7 @@ from bot.services.leaderboard_client import (
     LeaderboardEntry,
     fetch_leaderboard,
 )
+from bot.services.season_score import recalculate_season_score
 
 log = logging.getLogger(__name__)
 
@@ -44,17 +46,16 @@ async def get_snapshot(
     Always reads from the DB — never calls the API.
     Returns ([], 0, "") if no data has been stored yet.
     """
-    async with get_db() as db:
-        cursor = await db.execute(
+    async with get_db() as conn:
+        rows = await conn.fetch(
             """
             SELECT rank, battletag, battletag_orig, rating, season_id, updated_at
             FROM ldb_current_entries
-            WHERE region = ? AND mode = ?
+            WHERE region = $1 AND mode = $2
             ORDER BY rank
             """,
-            (region.upper(), mode.lower()),
+            region.upper(), mode.lower(),
         )
-        rows = await cursor.fetchall()
 
     if not rows:
         return [], 0, ""
@@ -97,16 +98,15 @@ async def refresh_pages(
     current_season_id = 0
     rows_written = 0
 
-    async with get_db() as db:
+    async with get_db() as conn:
         # Load all registered battletags for this region once per refresh run.
         # Map: battletag_lower (name only, no #NNNN) → discord_id
-        reg_cursor = await db.execute(
-            "SELECT discord_id, battletag FROM user_battletags WHERE region = ?",
-            (region.upper(),),
-        )
         registered: dict[str, str] = {
             row["battletag"].lower().split("#")[0]: row["discord_id"]
-            for row in await reg_cursor.fetchall()
+            for row in await conn.fetch(
+                "SELECT discord_id, battletag FROM user_battletags WHERE region = $1",
+                region.upper(),
+            )
         }
 
         async def on_started(season_id: int) -> None:
@@ -121,31 +121,31 @@ async def refresh_pages(
                 )
             current_season_id = season_id
             # When a new season starts, wipe stale entries from prior season.
-            await db.execute(
+            await conn.execute(
                 "DELETE FROM ldb_current_entries "
-                "WHERE region = ? AND mode = ? AND season_id != ?",
-                (region.upper(), mode.lower(), season_id),
+                "WHERE region = $1 AND mode = $2 AND season_id != $3",
+                region.upper(), mode.lower(), season_id,
             )
-            await db.commit()
 
         async def on_page(page: int, raw_rows: list[dict]) -> None:
             nonlocal rows_written
             page_entries = _parse_rows(raw_rows)
             if not page_entries:
                 return
-            now = datetime.now(timezone.utc).isoformat()
-            date_utc = now[:10]  # YYYY-MM-DD
-            await db.executemany(
+            now = datetime.now(timezone.utc)
+            date_utc = now.strftime("%Y-%m-%d")
+
+            await conn.executemany(
                 """
                 INSERT INTO ldb_current_entries
                     (region, mode, season_id, rank, battletag, battletag_orig, rating, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(region, mode, rank) DO UPDATE SET
-                    season_id      = excluded.season_id,
-                    battletag      = excluded.battletag,
-                    battletag_orig = excluded.battletag_orig,
-                    rating         = excluded.rating,
-                    updated_at     = excluded.updated_at
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                ON CONFLICT (region, mode, rank) DO UPDATE SET
+                    season_id      = EXCLUDED.season_id,
+                    battletag      = EXCLUDED.battletag,
+                    battletag_orig = EXCLUDED.battletag_orig,
+                    rating         = EXCLUDED.rating,
+                    updated_at     = EXCLUDED.updated_at
                 """,
                 [
                     (region.upper(), mode.lower(), current_season_id,
@@ -153,49 +153,74 @@ async def refresh_pages(
                     for e in page_entries
                 ],
             )
-            await db.commit()
             rows_written += len(page_entries)
             log.debug("%s/%s page %d — upserted %d rows", region, mode, page, len(page_entries))
 
             # ── Track registered players found in this page ───────────────────
             if not registered:
                 return
-            found_registered = False
             for entry in page_entries:
                 discord_id = registered.get(entry.battletag)
                 if discord_id is None:
                     continue
-                found_registered = True
                 log.debug(
                     "Tracked registered player %s at rank #%d (%s/%s)",
                     entry.battletag_orig, entry.rank, region, mode,
                 )
-                await db.execute(
+                await conn.execute(
                     """
                     INSERT INTO player_rank_log
                         (discord_id, region, mode, season_id, rank, rating, observed_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)
                     """,
-                    (discord_id, region.upper(), mode.lower(),
-                     current_season_id, entry.rank, entry.rating, now),
+                    discord_id, region.upper(), mode.lower(),
+                    current_season_id, entry.rank, entry.rating, now,
                 )
-                await db.execute(
+                await conn.execute(
                     """
                     INSERT INTO player_daily_best
                         (discord_id, region, mode, season_id, date_utc, best_rank, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(discord_id, region, mode, season_id, date_utc) DO UPDATE SET
-                        best_rank  = MIN(best_rank, excluded.best_rank),
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    ON CONFLICT (discord_id, region, mode, season_id, date_utc) DO UPDATE SET
+                        best_rank  = LEAST(player_daily_best.best_rank, EXCLUDED.best_rank),
                         updated_at = CASE
-                            WHEN excluded.best_rank < best_rank THEN excluded.updated_at
-                            ELSE updated_at
+                            WHEN EXCLUDED.best_rank < player_daily_best.best_rank
+                            THEN EXCLUDED.updated_at
+                            ELSE player_daily_best.updated_at
                         END
                     """,
-                    (discord_id, region.upper(), mode.lower(),
-                     current_season_id, date_utc, entry.rank, now),
+                    discord_id, region.upper(), mode.lower(),
+                    current_season_id, date_utc, entry.rank, now,
                 )
-            if found_registered:
-                await db.commit()
+
+                legend_count = await conn.fetchval(
+                    "SELECT COUNT(*) FROM ldb_current_entries "
+                    "WHERE region = $1 AND mode = $2 AND season_id = $3",
+                    region.upper(), mode.lower(), current_season_id,
+                )
+                best_rank = entry.rank
+                dps = (
+                    math.log10(legend_count) * ((legend_count - best_rank + 1) / legend_count) * 100
+                    if legend_count > 0 else 0.0
+                )
+                await conn.execute(
+                    """
+                    INSERT INTO player_daily_dps
+                        (discord_id, region, mode, season_id, date_utc, dps, best_rank, legend_count, updated_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                    ON CONFLICT (discord_id, region, mode, season_id, date_utc) DO UPDATE SET
+                        dps          = EXCLUDED.dps,
+                        best_rank    = EXCLUDED.best_rank,
+                        legend_count = EXCLUDED.legend_count,
+                        updated_at   = EXCLUDED.updated_at
+                    """,
+                    discord_id, region.upper(), mode.lower(),
+                    current_season_id, date_utc, dps, best_rank, legend_count, now,
+                )
+
+                await recalculate_season_score(
+                    discord_id, region.upper(), mode.lower(), current_season_id
+                )
 
         async def on_page_error(page: int) -> None:
             log.warning(
@@ -212,22 +237,20 @@ async def refresh_pages(
         )
 
         # ── Write refresh audit log ───────────────────────────────────────────
-        lc_cursor = await db.execute(
-            "SELECT COUNT(*) FROM ldb_current_entries WHERE region = ? AND mode = ?",
-            (region.upper(), mode.lower()),
+        legend_count = await conn.fetchval(
+            "SELECT COUNT(*) FROM ldb_current_entries WHERE region = $1 AND mode = $2",
+            region.upper(), mode.lower(),
         )
-        legend_count = (await lc_cursor.fetchone())[0]
-        await db.execute(
+        await conn.execute(
             """
             INSERT INTO ldb_refresh_log
                 (region, mode, season_id, legend_count, is_full, completed_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES ($1, $2, $3, $4, $5, $6)
             """,
-            (region.upper(), mode.lower(), current_season_id,
-             legend_count, 1 if max_page is None else 0,
-             datetime.now(timezone.utc).isoformat()),
+            region.upper(), mode.lower(), current_season_id,
+            legend_count, max_page is None,
+            datetime.now(timezone.utc),
         )
-        await db.commit()
 
     log.info(
         "refresh_pages %s/%s max_page=%s — upserted %d rows (season %s)",
@@ -250,4 +273,3 @@ def _parse_rows(rows: list[dict]) -> list[LeaderboardEntry]:
                 rating=row.get("rating"),
             ))
     return result
-

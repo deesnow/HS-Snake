@@ -1,5 +1,5 @@
 # Development overrides — mounts local source for live reload
-# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 
 services:
   bot:
@@ -7,16 +7,23 @@ services:
       context: .
       dockerfile: docker/bot/Dockerfile
     volumes:
-      - ./bot:/app/bot         # Live-mount source
+      - ./bot:/app/bot
       - ./assets:/app/assets
-      - ./docker/log:/app/logs
+      - ./log:/app/logs
+      - ./data:/app/data
     working_dir: /app
     environment:
       LOG_LEVEL: DEBUG
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: hs-snake_user
+      POSTGRES_PASSWORD: hs-snake_password
+      POSTGRES_DB: hs-snake_db
     command: >
-      sh -c "pip install watchdog &&
       python -m watchdog.watchmedo auto-restart
       --patterns='*.py'
       --recursive
       --debug-force-polling
-      -- python -m bot.main"
+      -- python -m bot.main
+    networks:
+      - internal

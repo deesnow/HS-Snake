@@ -64,6 +64,7 @@ class DeckDecoder:
             raw_deck = Deck.from_deckstring(bare_code)
         except Exception as exc:
             raise ValueError(f"Could not parse deck code: {exc}") from exc
+        log.debug("raw_deck format=%s heroes=%s cards=%s", raw_deck.format, raw_deck.heroes, raw_deck.cards)
 
         await self._client.ensure_loaded()
 

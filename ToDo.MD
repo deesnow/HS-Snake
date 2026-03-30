@@ -2,47 +2,38 @@
 
 ---
 
-## Season Ranking Score
+## Daily Point Score (DPS) & Season Score
 
-**Goal:** Track each registered player's best daily legend rank throughout a season and compute a weighted season score that accounts for the size of the legend pool each day.
+**Goal:** Track each registered player's daily DPS and compute a season score using the new log-based formula, keyed by `discord_id`.
 
-Calculation: https://gemini.google.com/share/2ec4311c05ac
+### Calculation
 
-### Background / Design
+- **Daily Point Score (DPS):**
+  $$DPS = \log_{10}(N) \times \left( \frac{N - R + 1}{N} \right) \times 100$$
+  - $N$: Legend pool size (legend_count)
+  - $R$: Player's best rank that day
+  - $\log_{10}(N)$: Inflation factor for pool size
+  - $100$: Scaling for readability
 
-- Early in a season very few players reach legend, so a top rank is harder to hold — the legend pool size acts as a weight.
-- Each day the player's **best rank** for that UTC calendar day is snapshotted.
-- A **day score** is computed as a percentile (higher = better):
-  ```
-  day_score = (legend_count - best_rank + 1) / legend_count   →  0.0 … 1.0
-  ```
-- The **season score** is a cumulative weighted average updated each day:
-  ```
-  total_weighted_score += day_score × legend_count
-  total_weight         += legend_count
-  season_score          = total_weighted_score / total_weight
-  ```
-- Keyed per `(discord_id, region, mode, season_id)`.
-- Season rollover detected via existing `season_id` from `ldb_current_entries`.
+- **Season Score:**
+  $$Season\ Score = \frac{\sum_{d=1}^{n} DPS_d}{n}$$
+  - $n$: Number of days in the season so far
+  - Average of daily DPS values
 
 ### New DB Tables
 
-- **`rank_daily_snapshots`** — `(discord_id, region, mode, season_id, snapshot_date, best_rank, legend_count)`
-- **`rank_season_scores`** — `(discord_id, region, mode, season_id, season_score, days_counted, total_weight, total_weighted_score, updated_at)`
+- **`player_daily_dps`** — `(discord_id, region, mode, season_id, date_utc, dps, best_rank, legend_count, updated_at)`
+- **`player_season_score`** — `(discord_id, region, mode, season_id, season_score, days_counted, updated_at)`
 
 ### Tasks
 
-- [ ] **SR-01** — Add `rank_daily_snapshots` and `rank_season_scores` tables to `db.py` migrations
-- [ ] **SR-02** — Add `season_score.py` service: functions to record daily snapshot and recalculate season score
-- [ ] **SR-03** — Add a daily background task (fires once at ~23:59 UTC) in `rank_commands.py` (or a new cog) that:
-  - Reads all distinct `(discord_id, region, mode)` registrations from `user_battletags`
-  - Looks up their current rank and total legend count from `ldb_current_entries`
-  - Writes a snapshot row; skips players not found in top-N (or records as absent)
-  - Recalculates and upserts the season score row
-- [ ] **SR-04** — Handle season rollover: when `season_id` changes, do not carry over score; new season starts fresh
-- [ ] **SR-05** — Handle missing days gracefully (player not yet in legend or outside top-N scan range)
-- [ ] **SR-06** — Implement `/seasonscore [region] [mode]` command — shows the user's current season score, days counted, and best rank achieved
-- [ ] **SR-07** — (Optional) `/seasonleaderboard [region] [mode]` — top-N season scores among all registered users in the server
+- [x] **DPS-01** — Add `player_daily_dps` and `player_season_score` tables to `db.py` migrations
+- [x] **DPS-02** — Add `season_score.py` service: functions to record daily DPS and recalculate season score
+- [ ] **SR-01** — Recalculate and upsert season score for each player immediately after DPS calculation (in leaderboard refresh), using `season_score.py`
+- [ ] **SR-02** — Handle season rollover: when `season_id` changes, do not carry over score; new season starts fresh
+- [ ] **SR-03** — Handle missing days gracefully (player not yet in legend or outside top-N scan range)
+- [ ] **SR-04** — Show season score, days counted, and best rank achieved alongside DPS in the `/rank` command (no separate `/seasonscore` command)
+- [ ] **SR-05** — (Optional) `/seasonleaderboard [region] [mode]` — top-N season scores among all registered users in the server
 
 ### Open Questions
 
