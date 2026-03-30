@@ -13,6 +13,7 @@ This guide covers three deployment paths:
 |---|---|---|
 | Docker Engine | 25+ | Required for paths A and C — installed in A.1 if missing |
 | Docker Compose | v2 (plugin, bundled with Docker Engine) | Uses `docker compose` syntax |
+| PostgreSQL | 16+ | Required only for path B — paths A and C use the bundled container |
 | Python | 3.12+ | Required only for path B |
 | Git | any | Required only for paths B and C |
 
@@ -50,10 +51,10 @@ curl --create-dirs -o docker/cache/nginx.conf \
      https://raw.githubusercontent.com/deesnow/hs-snake/main/docker/cache/nginx.conf
 ```
 
-Create the required directories for the bot's database and log files, then create a `.env` file:
+Create the required directories, then create a `.env` file:
 
 ```bash
-mkdir -p data docker/log
+mkdir -p log data docker/cache pgdata
 ```
 
 ```env
@@ -70,7 +71,7 @@ HSJSON_LOCALE=enUS
 LOG_LEVEL=INFO
 ```
 
-> `CACHE_BASE_URL` is set automatically by Docker Compose — do not change it.
+> `CACHE_BASE_URL` and all `POSTGRES_*` variables are set automatically by Docker Compose — do not add them here for Docker deployments.
 
 ---
 
@@ -101,7 +102,7 @@ docker compose version
 
 ```bash
 mkdir hs-snake && cd hs-snake
-mkdir -p data docker/cache docker/log
+mkdir -p log data docker/cache pgdata
 ```
 
 ### A.3 — Download the two required config files
@@ -153,9 +154,9 @@ docker login ghcr.io -u YOUR_GITHUB_USERNAME
 docker compose up -d
 ```
 
-Docker pulls `ghcr.io/deesnow/hs-snake:latest` and `nginx:1.27-alpine` on first run, then starts both containers.
+Docker pulls `ghcr.io/deesnow/hs-snake:latest`, `postgres:16-alpine`, and `nginx:1.27-alpine` on first run, then starts all containers. The database schema is created automatically on first start. Data is persisted in `./pgdata/`.
 
-**Verify both containers are running:**
+**Verify all containers are running:**
 
 ```bash
 docker compose ps
@@ -163,10 +164,11 @@ docker compose ps
 
 Expected output:
 
-```
-NAME              IMAGE                          STATUS
-hs-snake-bot-1    ghcr.io/deesnow/hs-snake:latest  Up X seconds
-hs-snake-cache-1  nginx:1.27-alpine              Up X seconds (healthy)
+```text
+NAME                  IMAGE                             STATUS
+hs-snake-bot-1        ghcr.io/deesnow/hs-snake:latest   Up X seconds
+hs-snake-cache-1      nginx:1.27-alpine                 Up X seconds (healthy)
+hs-snake-postgres-1   postgres:16-alpine                Up X seconds (healthy)
 ```
 
 **Follow live logs:**
@@ -176,7 +178,8 @@ docker compose logs -f bot
 ```
 
 You should see a line like:
-```
+
+```text
 HS-Snake v0.2.0 — logged in as HS-Snake#1234 (id=1234567890)
 ```
 
@@ -188,10 +191,12 @@ Press `Ctrl+C` to stop following logs — the bot keeps running in the backgroun
 |---|---|
 | Stop the bot | `docker compose down` |
 | Restart the bot | `docker compose restart bot` |
-| Update to the latest image | `docker compose pull && docker compose up -d` |
+| Update to the latest image | `docker compose pull bot && docker compose up -d bot` |
+| Run the RC (pre-release) image | `BOT_TAG=rc docker compose up -d` or set `BOT_TAG=rc` in `.env` |
+| Switch back to stable | Remove `BOT_TAG` from `.env`, then `docker compose pull bot && docker compose up -d bot` |
 | View recent logs | `docker compose logs --tail=100 bot` |
 
-> Guild settings (SQLite) are persisted in `./data/bot.db` (bind-mounted into the container) and survive restarts and image updates.
+> All data is stored in PostgreSQL and persisted in `./pgdata/` (bind-mounted). It survives bot restarts and image updates. Stopping with `docker compose down` keeps `pgdata/` intact — only `docker compose down -v` would remove it.
 
 ### A.8 — Updating production after a merged PR
 
@@ -204,15 +209,17 @@ docker compose up -d bot
 ```
 
 Or as a single one-liner:
+
 ```bash
 docker compose pull bot && docker compose up -d bot
 ```
 
 > - `docker compose pull bot` downloads the new image without stopping anything.
-> - `docker compose up -d bot` recreates only the `bot` container with the new image. The `cache` container is unaffected and keeps running.
-> - `data/bot.db` is bind-mounted and survives the container recreation — no data is lost.
+> - `docker compose up -d bot` recreates only the `bot` container with the new image. The `cache` and `postgres` containers are unaffected and keep running.
+> - `pgdata/` is bind-mounted and survives the container recreation — no data is lost.
 
 **Verify the update:**
+
 ```bash
 # Check the new image is running
 docker compose ps
@@ -226,6 +233,17 @@ docker compose logs --tail=20 bot | grep "logged in"
 ## Option B — Run Locally (no Docker)
 
 Card images are fetched directly from `art.hearthstonejson.com` — the Nginx cache is skipped.
+
+**Requires a running PostgreSQL 16+ instance.** You can run one quickly with Docker even if the bot itself runs locally:
+
+```bash
+docker run -d --name hs-snake-pg \
+  -e POSTGRES_USER=hs-snake_user \
+  -e POSTGRES_PASSWORD=hs-snake_password \
+  -e POSTGRES_DB=hs-snake_db \
+  -p 5432:5432 \
+  postgres:16-alpine
+```
 
 Clone the repository first:
 
@@ -252,10 +270,16 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-**Add to your `.env`** (disables the cache lookup):
+**Add to your `.env`** (adjust credentials if your PostgreSQL setup differs):
 
 ```env
 CACHE_BASE_URL=http://invalid
+
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+POSTGRES_USER=hs-snake_user
+POSTGRES_PASSWORD=hs-snake_password
+POSTGRES_DB=hs-snake_db
 ```
 
 **Start the bot:**
@@ -288,7 +312,7 @@ Copy-Item .env.example .env
 notepad .env
 
 # Create directories required by Docker bind-mounts
-New-Item -ItemType Directory -Force -Path data, docker\cache, docker\log
+New-Item -ItemType Directory -Force -Path log, data, pgdata, docker\cache
 ```
 
 ### C.2 — Switch to the branch you want to test
@@ -341,7 +365,7 @@ git checkout other-branch
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 ```
 
-> Logs are written to `./docker/log/bot.log` on the host — visible in VS Code's Explorer panel while the bot is running.
+> Logs are written to `./log/bot.log` on the host — visible in VS Code's Explorer panel while the bot is running.
 
 ---
 
@@ -376,8 +400,10 @@ hs-snake/
 │   └── fonts/                  # Belwe.ttf for deck image rendering
 ├── docker/
 │   ├── bot/Dockerfile          # Multi-stage Python image
-│   ├── cache/nginx.conf        # Nginx proxy cache config
-│   └── log/                    # Log file output (bind-mounted into the container)
+│   └── cache/nginx.conf        # Nginx proxy cache config
+├── log/                        # Bot log files (bind-mounted: ./log:/app/logs)
+├── data/                       # Misc bot data (bind-mounted: ./data:/app/data)
+├── pgdata/                     # PostgreSQL data files (bind-mounted, persists DB)
 ├── docker-compose.yml          # Production stack
 ├── docker-compose.dev.yml      # Development overrides
 ├── requirements.txt
@@ -396,5 +422,7 @@ hs-snake/
 | Bot is online but slash commands do not appear | Global sync delay | Set `DISCORD_GUILD_ID` to your server ID for instant guild-scoped sync |
 | `deckimage` returns no image / error in logs | Card image fetch failed | Check internet access; try `IMAGE_CARD_SIZE=256x` |
 | `cache` container unhealthy | Nginx still starting | Wait 10–15 s; run `docker compose ps` again |
-| Permission denied writing `data/bot.db` | `data/` directory missing or wrong ownership | Run `mkdir -p data` in the working directory before `docker compose up` |
+| `postgres` container unhealthy or not starting | `pgdata/` missing or wrong ownership | Run `mkdir -p pgdata` before `docker compose up`; check `docker compose logs postgres` |
+| Bot fails to connect to database | `postgres` container not healthy yet | The bot waits for `postgres` healthcheck — if it times out, check `docker compose ps` and `docker compose logs postgres` |
+| Permission denied writing to `log/` | `log/` directory missing or wrong ownership | Run `mkdir -p log` in the working directory before `docker compose up` |
 | Message Content Intent error in logs | Intent not enabled in Developer Portal | Go to **Bot → Privileged Gateway Intents** and enable **Message Content Intent** |

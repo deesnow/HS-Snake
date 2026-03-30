@@ -30,7 +30,10 @@ async def recalculate_season_score(discord_id: str, region: str, mode: str, seas
             # d0 = first day of the season (month of first data)
             # d1 = today UTC (season is still running)
             # n = days in season so far — missing days count as DPS 0
-            d0 = datetime.strptime(max_date, "%Y-%m-%d").replace(day=1)
+            if isinstance(max_date, str):
+                d0 = datetime.strptime(max_date, "%Y-%m-%d").replace(day=1, tzinfo=timezone.utc)
+            else:
+                d0 = max_date.replace(day=1, hour=0, minute=0, second=0, microsecond=0, tzinfo=timezone.utc)
             d1 = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
             n_days = (d1 - d0).days + 1
             days_counted = n_days

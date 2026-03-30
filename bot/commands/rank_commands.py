@@ -246,7 +246,7 @@ class RankCommands(commands.Cog):
             )
             best_rank = await conn.fetchval(
                 """
-                SELECT MIN(best_rank) FROM player_daily_dps
+                SELECT MIN(best_rank) FROM player_daily_best
                 WHERE discord_id = $1 AND region = $2 AND mode = $3 AND season_id = $4
                 """,
                 discord_id, region, mode, season_id,
@@ -294,7 +294,7 @@ class RankCommands(commands.Cog):
             )
             std_best = await conn.fetchval(
                 """
-                SELECT MIN(best_rank) FROM player_daily_dps
+                SELECT MIN(best_rank) FROM player_daily_best
                 WHERE discord_id = $1 AND region = $2 AND mode = $3 AND season_id = $4
                 """,
                 discord_id, region, "standard", std_season,
@@ -316,7 +316,7 @@ class RankCommands(commands.Cog):
             )
             wild_best = await conn.fetchval(
                 """
-                SELECT MIN(best_rank) FROM player_daily_dps
+                SELECT MIN(best_rank) FROM player_daily_best
                 WHERE discord_id = $1 AND region = $2 AND mode = $3 AND season_id = $4
                 """,
                 discord_id, region, "wild", wild_season,

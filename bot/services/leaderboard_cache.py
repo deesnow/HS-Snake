@@ -209,10 +209,22 @@ async def refresh_pages(
                         (discord_id, region, mode, season_id, date_utc, dps, best_rank, legend_count, updated_at)
                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                     ON CONFLICT (discord_id, region, mode, season_id, date_utc) DO UPDATE SET
-                        dps          = EXCLUDED.dps,
-                        best_rank    = EXCLUDED.best_rank,
-                        legend_count = EXCLUDED.legend_count,
-                        updated_at   = EXCLUDED.updated_at
+                        best_rank    = LEAST(player_daily_dps.best_rank, EXCLUDED.best_rank),
+                        dps          = CASE
+                            WHEN EXCLUDED.best_rank < player_daily_dps.best_rank
+                            THEN EXCLUDED.dps
+                            ELSE player_daily_dps.dps
+                        END,
+                        legend_count = CASE
+                            WHEN EXCLUDED.best_rank < player_daily_dps.best_rank
+                            THEN EXCLUDED.legend_count
+                            ELSE player_daily_dps.legend_count
+                        END,
+                        updated_at   = CASE
+                            WHEN EXCLUDED.best_rank < player_daily_dps.best_rank
+                            THEN EXCLUDED.updated_at
+                            ELSE player_daily_dps.updated_at
+                        END
                     """,
                     discord_id, region.upper(), mode.lower(),
                     current_season_id, date_utc, dps, best_rank, legend_count, now,
