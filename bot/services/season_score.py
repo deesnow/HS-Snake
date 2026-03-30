@@ -18,18 +18,20 @@ async def recalculate_season_score(discord_id: str, region: str, mode: str, seas
         max_date = await conn.fetchval(
             """
             SELECT MAX(date_utc) FROM player_daily_dps
-            WHERE region = $1 AND mode = $2 AND season_id = $3
+            WHERE discord_id = $1 AND region = $2 AND mode = $3 AND season_id = $4
             """,
-            region, mode, season_id,
+            discord_id, region, mode, season_id,
         )
 
         if not max_date:
             days_counted = 0
             season_score = 0.0
         else:
-            # max_date is a TEXT "YYYY-MM-DD" string
-            d1 = datetime.strptime(max_date, "%Y-%m-%d")
-            d0 = d1.replace(day=1)  # first day of the month
+            # d0 = first day of the season (month of first data)
+            # d1 = today UTC (season is still running)
+            # n = days in season so far — missing days count as DPS 0
+            d0 = datetime.strptime(max_date, "%Y-%m-%d").replace(day=1)
+            d1 = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
             n_days = (d1 - d0).days + 1
             days_counted = n_days
             all_days = {(d0 + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(n_days)}
