@@ -37,7 +37,8 @@ class DeckInfo:
     hero_dbf_id: int
     hero_class: str
     deck_name: str = ""
-    cards: list = field(default_factory=list)   # List[CardEntry]
+    cards: list = field(default_factory=list)           # List[CardEntry]
+    etc_sideboard_cards: list = field(default_factory=list)  # List[CardEntry] — E.T.C. Band Manager sideboard
 
     @property
     def total_cards(self) -> int:

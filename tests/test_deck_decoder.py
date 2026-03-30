@@ -6,8 +6,7 @@ import pytest
 
 # A real Standard deck code for quick sanity tests
 SAMPLE_WARRIOR_CODE = (
-    "AAECAQcGkrEE2scE09AEgtEEh9IEvNIEDPoBqAKUA5wDpAOWBZMH"
-    "kAiko4IE6KMIV6WEBS/gBwA="
+    "AAEBAfWhByi7BfoOwxb8owO2uwP21gPm7gOU/AOpnwTHsgSNtQTnuQTM5ATQ5ASX7wSwkwX9xAWt6QXf7QWX9gXI9gXI+AXT+AWFjgbLjgbUjgbQngaToQaUoQbxpQbi4wbR5QbH9QbO/AavkgeCmAfzmweZpweapwebpwcAAAEDuwX9xAXm7gP9xAWU/AP9xAUAAA=="
 )
 
 
@@ -46,3 +45,44 @@ async def test_decode_invalid_code_raises():
 
     with pytest.raises(ValueError):
         await decoder.decode("this-is-not-a-deck-code")
+
+
+# Deck code containing E.T.C. Band Manager (90749) with 3 sideboard cards:
+# sideboard card dbfIds: 1059, 1746, 2039
+ETC_DECK_CODE = (
+    "AAEBAQcC/cQF1J8GDqcIqAixCMgIoIAD74kDg8MDo9UDnvkDoPkD"
+    "6rwEtdAE/sMFrfQFAAEDowj9xAXSDf3EBfcP/cQFAAA="
+)
+_ETC_BAND_MANAGER_DBF = 90749
+_ETC_SIDEBOARD_DBFS = {1059, 1746, 2039}
+
+
+@pytest.mark.asyncio
+async def test_decode_etc_sideboard_cards():
+    """E.T.C. Band Manager sideboard cards must appear in etc_sideboard_cards."""
+    from unittest.mock import AsyncMock, MagicMock
+    from bot.services.deck_decoder import DeckDecoder
+    from bot.services.models import CardInfo
+
+    def make_card(dbf_id):
+        return CardInfo(
+            dbf_id=dbf_id, card_id=f"CARD_{dbf_id}", name=f"Card {dbf_id}",
+            cost=1, card_type="MINION", rarity="COMMON",
+            card_class="NEUTRAL", card_set="CORE",
+        )
+
+    mock_client = MagicMock()
+    mock_client.ensure_loaded = AsyncMock()
+    mock_client.get_card = AsyncMock(side_effect=lambda dbf_id: make_card(dbf_id))
+
+    decoder = DeckDecoder(mock_client)
+    deck = await decoder.decode(ETC_DECK_CODE)
+
+    # E.T.C. must be in the main cards list
+    main_dbf_ids = {e.card.dbf_id for e in deck.cards}
+    assert _ETC_BAND_MANAGER_DBF in main_dbf_ids
+
+    # Exactly 3 sideboard entries, all owned by E.T.C.
+    assert len(deck.etc_sideboard_cards) == 3
+    sideboard_dbf_ids = {e.card.dbf_id for e in deck.etc_sideboard_cards}
+    assert sideboard_dbf_ids == _ETC_SIDEBOARD_DBFS

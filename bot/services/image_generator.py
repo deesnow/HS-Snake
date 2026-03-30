@@ -162,6 +162,8 @@ class ImageGenerator:
         entries = sorted(
             deck.cards, key=lambda e: (e.card.cost, e.card.card_type, e.card.name)
         )
+        if deck.etc_sideboard_cards:
+            entries += sorted(deck.etc_sideboard_cards, key=lambda e: (e.card.cost, e.card.name))
         n = len(entries)
 
         card_w, card_h, cols = _calc_card_size(n)

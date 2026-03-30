@@ -87,6 +87,17 @@ class DeckDecoder:
                 continue
             card_entries.append(CardEntry(card=card, count=count))
 
+        _ETC_BAND_MANAGER = 90749
+        etc_entries: list[CardEntry] = []
+        for card_id, count, sideboard_owner in (raw_deck.sideboards or []):
+            if sideboard_owner != _ETC_BAND_MANAGER:
+                continue
+            card = await self._client.get_card(card_id)
+            if card is None:
+                log.warning("Unknown dbfId=%s in E.T.C. sideboard, skipping", card_id)
+                continue
+            etc_entries.append(CardEntry(card=card, count=count))
+
         result = DeckInfo(
             format_id=format_id,
             format_label=format_label,
@@ -94,6 +105,10 @@ class DeckDecoder:
             hero_class=hero_class,
             deck_name=deck_name,
             cards=card_entries,
+            etc_sideboard_cards=etc_entries,
         )
-        log.debug("decode success class=%s format=%s cards=%d", hero_class, format_label, len(card_entries))
+        log.debug(
+            "decode success class=%s format=%s cards=%d etc_sideboard=%d",
+            hero_class, format_label, len(card_entries), len(etc_entries),
+        )
         return result
