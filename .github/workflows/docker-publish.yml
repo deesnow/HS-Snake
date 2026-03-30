@@ -4,6 +4,7 @@ on:
   push:
     branches: [main, rc]      # pushes to main → :latest, rc → :rc tag
     tags: ['v*.*.*']          # version tags → :v0.2.0 + :0.2 + :latest
+  workflow_dispatch:           # manual trigger from GitHub Actions UI
 
 jobs:
   build-and-push:
