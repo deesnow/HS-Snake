@@ -62,6 +62,14 @@ def build_simple_deck_text(deck, code: str) -> str:
     for entry in sorted_entries:
         icon = RARITY_ICON.get(entry.card.rarity.upper(), "⚪")
         lines.append(f"{icon} {entry.count}x ({entry.card.cost}) {entry.card.name}")
+
+    if deck.etc_sideboard_cards:
+        lines.append(separator)
+        lines.append("**E.T.C. Band Manager:**")
+        for entry in sorted(deck.etc_sideboard_cards, key=lambda e: e.card.name):
+            icon = RARITY_ICON.get(entry.card.rarity.upper(), "⚪")
+            lines.append(f"{icon} ({entry.card.cost}) {entry.card.name}")
+
     lines.append(f"\n**Deck Code:**\n{code}")
     return "\n".join(lines)
 
@@ -165,6 +173,12 @@ def build_deck_embed(deck) -> discord.Embed:
         if len(block) > 1024:
             block = block[:1020] + "\n```"
         embed.add_field(name=label, value=block, inline=False)
+
+    if deck.etc_sideboard_cards:
+        block = _table_block(deck.etc_sideboard_cards)
+        if len(block) > 1024:
+            block = block[:1020] + "\n```"
+        embed.add_field(name="E.T.C. Band Manager sideboard (3)", value=block, inline=False)
 
     embed.add_field(name="Mana Curve", value=_mana_curve_block(deck), inline=False)
 

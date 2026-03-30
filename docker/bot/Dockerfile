@@ -17,6 +17,9 @@ RUN pip install --prefix=/install --no-cache-dir -r requirements.txt
 # ── Stage 2: slim runtime image ────────────────────────────────────────
 FROM python:3.12-slim AS runtime
 
+ARG BOT_VERSION=dev
+ENV BOT_VERSION=${BOT_VERSION}
+
 WORKDIR /app
 
 # Runtime libs for Pillow + gosu for entrypoint privilege drop

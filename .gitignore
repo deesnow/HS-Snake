@@ -14,6 +14,7 @@ env/
 # Docker volumes / data
 data/
 card-cache/
+pgdata/
 
 # IDE
 .vscode/
@@ -37,3 +38,5 @@ DISCORD_SETUP.md
 
 # External reference repos (all xx_* folders)
 xx_*/
+bot.sqbpro
+tests/dev_api.py
