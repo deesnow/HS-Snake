@@ -2,7 +2,7 @@ services:
 
   # ── Discord Bot ────────────────────────────────────────────────────
   bot:
-    image: ghcr.io/deesnow/hs-snake:latest
+    image: ghcr.io/deesnow/hs-snake:${BOT_TAG:-latest}
     pull_policy: always
     env_file: .env
     environment:
