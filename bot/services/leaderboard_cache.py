@@ -248,7 +248,7 @@ async def refresh_pages(
             VALUES ($1, $2, $3, $4, $5, $6)
             """,
             region.upper(), mode.lower(), current_season_id,
-            legend_count, 1 if max_page is None else 0,
+            legend_count, max_page is None,
             datetime.now(timezone.utc),
         )
 
