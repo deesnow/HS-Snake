@@ -2,7 +2,7 @@
 
 ## Overview
 
-**HS-Snake** is a Discord bot that provides Hearthstone utilities directly inside Discord.  
+**HS-Snake** is a Discord bot that provides Hearthstone utilities directly inside Discord.
 Users can decode deck codes, analyse deck composition, render deck images, search cards with interactive filters, look up live legend leaderboard ranks, and configure per-server auto-detection of deck codes.
 
 ---
@@ -31,9 +31,9 @@ Users can decode deck codes, analyse deck composition, render deck images, searc
 
 | Command | Description |
 |---|---|
-| `/deck <code>` | Decode a deck code — simple card list with rarity icons, mana cost, format, and dust total |
-| `/deckanalyze <code>` | Detailed analysis: cards grouped by type (Minions/Spells/Weapons/Locations/Heroes), subtype/tribe column, mana curve bar chart |
-| `/deckimage <code>` | Render a visual deck image with card thumbnails |
+| `/deck <code>` | Decode a deck code — simple card list with rarity icons, mana cost, format, and dust total. E.T.C. Band Manager sideboard cards shown in a separate section. |
+| `/deckanalyze <code>` | Detailed analysis: cards grouped by type (Minions/Spells/Weapons/Locations/Heroes), subtype/tribe column, mana curve bar chart, and E.T.C. Band Manager sideboard section. |
+| `/deckimage <code>` | Render a visual deck image with card thumbnails, including E.T.C. sideboard cards. |
 
 ### Card Commands
 
@@ -103,8 +103,8 @@ Users can decode deck codes, analyse deck composition, render deck images, searc
 │                     └──────────┬─────────────┘                   │
 │                                │                                  │
 │                     ┌──────────▼─────────────┐                   │
-│                     │  SQLite (aiosqlite)     │                   │
-│                     │  data/bot.db            │                   │
+│                     │  PostgreSQL (asyncpg)   │                   │
+│                     │  hs-snake-postgres      │                   │
 │                     └─────────────────────────┘                  │
 └──────────────────────────────┬────────────────────────────────────┘
                                │
@@ -120,9 +120,9 @@ Users can decode deck codes, analyse deck composition, render deck images, searc
                                    └───────────────────────────────┘
 ```
 
-The bot container handles all Discord interaction, deck decoding, image rendering, leaderboard lookups, and per-guild configuration.  
-A lightweight Nginx container acts as a local HTTP cache for card artwork, eliminating repeated upstream requests after the first fetch.  
-A single SQLite database (`data/bot.db`) stores guild settings, user BattleTag registrations, and live leaderboard data.
+The bot container handles all Discord interaction, deck decoding, image rendering, leaderboard lookups, and per-guild configuration.
+A lightweight Nginx container acts as a local HTTP cache for card artwork, eliminating repeated upstream requests after the first fetch.
+A PostgreSQL container stores guild settings, user BattleTag registrations, and live leaderboard data.
 
 ---
 
@@ -131,12 +131,12 @@ A single SQLite database (`data/bot.db`) stores guild settings, user BattleTag r
 | Layer | Technology | Reason |
 |---|---|---|
 | Bot framework | [discord.py 2.x](https://discordpy.readthedocs.io/) | Mature, async, slash command + UI components support |
-| Deck decoding | [hearthstone](https://pypi.org/project/hearthstone/) | Official HS deck string parser |
+| Deck decoding | [hearthstone](https://pypi.org/project/hearthstone/) | Official HS deck string parser (includes sideboard support) |
 | HTTP client | [httpx](https://www.python-httpx.org/) | Async-first, connection pooling |
 | Image rendering | [Pillow](https://pillow.readthedocs.io/) | Card image composition |
 | Card data | [HearthstoneJSON](https://hearthstonejson.com/) | Community-maintained card DB |
 | Leaderboard data | Blizzard public API | `hearthstone.blizzard.com/en-us/api/community/leaderboardsData` |
-| Database | **SQLite** via [aiosqlite](https://aiosqlite.omnilib.dev/) | Guild settings, BattleTags, leaderboard cache |
+| Database | **PostgreSQL 16** via [asyncpg](https://magicstack.github.io/asyncpg/) | Guild settings, BattleTags, leaderboard cache |
 | Cache service | **Nginx** (Docker volume) | Simple, fast, zero-code static file cache |
 | Orchestration | **Docker Compose** | Multi-container local and prod deployment |
 | Config | **python-dotenv** | Environment variable management |
@@ -167,19 +167,27 @@ Returns 25 entries per page. Response includes `seasonId` and `totalPages`.
 
 ### Hearthstone Deck Code Format
 
-Deck codes are base64-encoded binary structures:
+Deck codes are base64-encoded binary structures using varint (LEB128) encoding:
 
 ```
-[0x00]                   ← reserved byte
-[varint version]         ← always 1
-[varint format]          ← 1=Wild, 2=Standard, 3=Classic, 4=Twist
-[varint count of n_heroes][varint heroId, ...]
-[varint count of single-copy cards][varint dbfId, ...]
-[varint count of double-copy cards][varint dbfId, ...]
-[varint count of n-copy cards][varint n][varint dbfId, ...]
+[0x00]                    ← reserved byte
+[varint version]          ← always 1
+[varint format]           ← 1=Wild, 2=Standard, 3=Classic, 4=Twist
+[varint count][heroId, ...]
+[varint count][single-copy dbfId, ...]
+[varint count][double-copy dbfId, ...]
+[varint count][n][dbfId, ...]   ← multi-copy cards
+
+Sideboard section (appended after main cards):
+[0x00]                    ← no sideboards
+  or
+[0x01]                    ← sideboards present
+[varint count][card_id, sideboard_owner, ...]     ← 1-copy sideboard entries
+[varint count][card_id, sideboard_owner, ...]     ← 2-copy sideboard entries
+[varint count][card_id, count, sideboard_owner, ...] ← multi-copy entries
 ```
 
-The `hearthstone` Python library handles this encoding/decoding transparently.
+The `sideboard_owner` identifies which card holds the sideboard (e.g. `90749` for E.T.C. Band Manager, `102983` for Zilliax 3000). The `hearthstone` Python library handles encoding/decoding transparently; `DeckDecoder` reads `raw_deck.sideboards` and filters for owner `90749`.
 
 ---
 
@@ -190,7 +198,7 @@ hs-snake/
 │
 ├── bot/                                # Bot application source
 │   ├── __init__.py
-│   ├── main.py                         # Entry point: bot init, cog loading
+│   ├── main.py                         # Entry point: bot init, cog loading, __version__
 │   ├── config.py                       # Settings loaded from env vars
 │   │
 │   ├── commands/                       # Discord slash command cogs
@@ -205,32 +213,31 @@ hs-snake/
 │   ├── services/                       # Business logic (no Discord coupling)
 │   │   ├── __init__.py
 │   │   ├── models.py                   # CardInfo, CardEntry, DeckInfo dataclasses
-│   │   ├── deck_decoder.py             # Wrap hearthstone deckstrings library
+│   │   ├── deck_decoder.py             # Wrap hearthstone deckstrings + sideboard handling
 │   │   ├── hs_json_client.py           # Fetch & cache card metadata + images
 │   │   ├── image_generator.py          # Compose deck image using Pillow
 │   │   ├── leaderboard_client.py       # Blizzard public leaderboard API client
-│   │   ├── leaderboard_cache.py        # SQLite upsert cache + refresh logic
+│   │   ├── leaderboard_cache.py        # PostgreSQL upsert cache + refresh logic
 │   │   ├── guild_settings.py           # Per-guild config CRUD
-│   │   └── db.py                       # aiosqlite connection helper + migrations
+│   │   └── db.py                       # asyncpg connection helper + migrations
 │   │
 │   └── utils/
 │       └── __init__.py
 │
 ├── docker/
 │   ├── bot/
-│   │   ├── Dockerfile                  # Multi-stage Python image
+│   │   ├── Dockerfile                  # Multi-stage Python image (BOT_VERSION build arg)
 │   │   └── entrypoint.sh
 │   └── cache/
 │       └── nginx.conf                  # Nginx reverse-proxy / file cache config
 │
 ├── assets/
 │   ├── fonts/                          # Optional custom fonts for image rendering
-│   ├── backs/                          # Card back images
-│   └── labels/                         # Label/badge assets
+│   ├── backs/                          # Class background images
+│   └── labels/                         # Card-count label overlays
 │
 ├── data/
-│   ├── cards_cache.json                # Cached HearthstoneJSON card DB
-│   └── bot.db                          # SQLite database (created at runtime)
+│   └── cards_cache.json                # Cached HearthstoneJSON card DB
 │
 ├── tests/
 │   ├── __init__.py
@@ -241,6 +248,7 @@ hs-snake/
 ├── requirements.txt
 ├── .env.example
 ├── .gitignore
+├── INSTALL.md
 ├── README.md
 └── DESIGN.md                           # ← this file
 ```
@@ -249,29 +257,29 @@ hs-snake/
 
 ## Database Schema
 
-Managed by `bot/services/db.py` via inline migrations on every connection open.
+Managed by `bot/services/db.py` via inline migrations applied on startup.
 
 ```sql
 -- Per-guild bot configuration
 CREATE TABLE guild_settings (
-    guild_id      INTEGER PRIMARY KEY,
-    admin_role_id INTEGER,            -- role that may run /botadmin commands
-    auto_detect   INTEGER DEFAULT 0,  -- 1 = enabled
-    all_channels  INTEGER DEFAULT 0   -- 1 = monitor every channel
+    guild_id      BIGINT PRIMARY KEY,
+    admin_role_id BIGINT,
+    auto_detect   BOOLEAN DEFAULT FALSE,
+    all_channels  BOOLEAN DEFAULT FALSE
 );
 
--- Per-guild monitored channel list (used when all_channels = 0)
+-- Per-guild monitored channel list (used when all_channels = false)
 CREATE TABLE monitored_channels (
-    guild_id   INTEGER NOT NULL,
-    channel_id INTEGER NOT NULL,
+    guild_id   BIGINT NOT NULL,
+    channel_id BIGINT NOT NULL,
     PRIMARY KEY (guild_id, channel_id)
 );
 
 -- User BattleTag registrations (one per discord_id × region)
 CREATE TABLE user_battletags (
-    discord_id  TEXT NOT NULL,
-    region      TEXT NOT NULL,   -- EU | US | AP
-    battletag   TEXT NOT NULL,   -- original casing e.g. "Player#1234"
+    discord_id  TEXT   NOT NULL,
+    region      TEXT   NOT NULL,   -- EU | US | AP
+    battletag   TEXT   NOT NULL,   -- original casing e.g. "Player#1234"
     PRIMARY KEY (discord_id, region)
 );
 
@@ -285,7 +293,7 @@ CREATE TABLE ldb_current_entries (
     battletag      TEXT    NOT NULL,   -- lower-cased for lookup
     battletag_orig TEXT    NOT NULL,   -- original casing for display
     rating         INTEGER,
-    updated_at     TEXT    NOT NULL,   -- ISO-8601 UTC
+    updated_at     TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (region, mode, rank)
 );
 
@@ -302,17 +310,20 @@ CREATE INDEX idx_ldb_current_btag ON ldb_current_entries (region, mode, battleta
 Input:  deck code string (e.g. "AAECAZICBsP...")
 Output: DeckInfo dataclass
   - format_id: int
-  - format_label: str      ("Standard" | "Wild" | "Classic" | "Twist")
+  - format_label: str           ("Standard" | "Wild" | "Classic" | "Twist")
   - hero_dbf_id: int
-  - hero_class: str        (e.g. "Mage")
+  - hero_class: str             (e.g. "Mage")
   - deck_name: str
   - cards: List[CardEntry]
-    - card: CardInfo
-    - count: int           (1 or 2)
-  - total_cards: int       (property)
+      - card: CardInfo
+      - count: int              (1 or 2)
+  - etc_sideboard_cards: List[CardEntry]
+      - card: CardInfo          (cards owned by E.T.C. Band Manager, dbfId 90749)
+      - count: int
+  - total_cards: int            (property, excludes sideboard)
 ```
 
-Uses the `hearthstone.deckstrings` module to decode dbfIds, then cross-references the HearthstoneJSON card database to enrich with name, cost, rarity, type, race, and spell school.
+Uses `hearthstone.deckstrings` to decode dbfIds, cross-references HearthstoneJSON to enrich with name, cost, rarity, type, race, and spell school. Reads `raw_deck.sideboards` and filters entries where `sideboard_owner == 90749` to populate `etc_sideboard_cards`.
 
 ---
 
@@ -337,22 +348,22 @@ Methods:
 
 ### `ImageGenerator`
 
-Builds a deck card image composed of rows of card renders.
+Builds a deck image using class-specific background images and card thumbnails.
 
 ```
-Layout (default, ~1000 × N pixels):
+Layout (3000 × ~2344 px canvas, class background):
 ┌────────────────────────────────────────┐
-│  [Hero portrait]  CLASS  FORMAT        │  ← Header bar
+│  [Card image] [Card image] [Card image]│  ← Grid of card renders
+│  ...                                   │     (main deck + ETC sideboard)
 ├────────────────────────────────────────┤
-│  [Card image][Card name    Cost]  ×2   │  ← One row per card
-│  ...                                   │
-├────────────────────────────────────────┤
-│  Total cards: 30     Dust: 4200        │  ← Footer bar
+│  Dust cost              hs-snake       │  ← Footer strip
 └────────────────────────────────────────┘
 
 Methods:
   async generate_deck_image(deck: DeckInfo) → BytesIO
 ```
+
+E.T.C. sideboard cards are appended after the main deck cards in the grid.
 
 ---
 
@@ -362,7 +373,7 @@ Fetches pages from the Blizzard public leaderboard API.
 
 - Shared token-bucket rate limiter (3 req/s) with adaptive backoff on 4xx/429
 - Retry schedule: 30 s → 60 s → 120 s before giving up on a page
-- Failed pages are skipped gracefully via `on_page_error` callback; previous DB rows remain
+- Failed pages are skipped gracefully; previous DB rows remain
 - Callbacks: `on_started(season_id)`, `on_page(page, rows)`, `on_page_error(page)`
 
 ```
@@ -374,7 +385,7 @@ async fetch_leaderboard(region, mode, *, on_started, on_page, on_page_error, max
 
 ### `LeaderboardCache`
 
-Wraps `LeaderboardClient` with SQLite persistence using the live upsert table.
+Wraps `LeaderboardClient` with PostgreSQL persistence.
 
 - **`get_snapshot(region, mode)`** — reads from DB only; never calls the API
 - **`refresh_pages(region, mode, max_page)`** — called by background tasks; upserts pages as they arrive; detects season rollover and wipes stale rows
@@ -418,19 +429,22 @@ async remove_channel(guild_id, channel_id)
 
 ### `/deck <code>`
 
-Responds with a plain-text card list:
+Responds with a plain-text card list. If E.T.C. Band Manager is in the deck, a separate sideboard section is appended:
 
 ```
 # **Warrior**
 **Cost:** 3,200 💠
 **Format:** Standard
 ────────────────────────────────────────
-⚪ 2x (1) Glaciaxe
 ⚪ 2x (1) Boom Wrench
 🔵 2x (2) Shield Slam
-🟣 2x (4) Brawl
 🟡 1x (5) Grommash Hellscream
 ...
+────────────────────────────────────────
+**E.T.C. Band Manager:**
+⚪ (2) Backstab
+🟣 (4) Brawl
+🟡 (7) Ragnaros the Firelord
 
 **Deck Code:**
 AAECAZICBsP...
@@ -446,6 +460,7 @@ Responds with a structured Discord embed:
 
 - Cards grouped into sections: **Minions**, **Spells**, **Weapons**, **Locations**, **Heroes**
 - Each section rendered as a monospace code-block table with columns: Rarity, Cost, Count, Name, Subtype/Tribe
+- **E.T.C. Band Manager sideboard** section when present
 - **Mana Curve** section rendered as an ASCII vertical bar chart (0–7+)
 - Header: `ClassName — Format · N cards · Dust cost`
 
@@ -455,6 +470,7 @@ Responds with a structured Discord embed:
 
 - Defers the interaction (shows loading indicator)
 - Decodes deck code and generates a PNG using `ImageGenerator`
+- E.T.C. sideboard cards rendered after the main deck grid
 - Sends the image as an attachment with a plain-text caption
 
 ---
@@ -478,7 +494,7 @@ Interactive ephemeral UI built with `discord.ui.View`:
 
 ### `/rankset <battletag> <region>`
 
-Registers (or updates) a BattleTag for EU / US / AP.  
+Registers (or updates) a BattleTag for EU / US / AP.
 Stored in `user_battletags`. Validates `Name#1234` format.
 
 ---
@@ -502,7 +518,7 @@ Looks up the user's rank in `ldb_current_entries`.
 
 ### `/botadmin` group
 
-All subcommands check `_is_admin()` (server owner → Administrator perm → configured admin role).  
+All subcommands check `_is_admin()` (server owner → Administrator perm → configured admin role).
 All responses are ephemeral.
 
 ---
@@ -515,7 +531,7 @@ Detection pipeline:
 3. **Deck parse** — `DeckDecoder.decode()` must succeed
 4. **Reply** — same image format as `/deckimage`, mentions-safe reply
 
-@mention path always runs regardless of guild settings.  
+@mention path always runs regardless of guild settings.
 Passive path respects `auto_detect` flag and channel scope (`all_channels` or `monitored_channels`).
 
 ---
@@ -523,21 +539,19 @@ Passive path respects `auto_detect` flag and channel scope (`all_channels` or `m
 ## Image Generation Pipeline
 
 ```
-1. Decode deck code  →  List of (dbfId, count) pairs
-2. For each card:
+1. Decode deck code → List of (dbfId, count) pairs + ETC sideboard pairs
+2. Combine: sorted main deck entries + sorted ETC sideboard entries
+3. For each card:
       a. Lookup CardInfo from card DB
-      b. Fetch/retrieve card image from cache (Nginx) or upstream
-      c. Resize to tile height (e.g. 64px)
-3. Open Pillow canvas: width=800, height = HEADER + (N_cards × TILE_H) + FOOTER
-4. draw header: hero portrait thumbnail + class name + format badge
-5. For each card row:
-      a. Paste card image tile
-      b. draw card name (truncated if needed)
-      c. draw mana cost bubble
-      d. draw count badge (×2)
-      e. color rarity strip on the left edge
-6. draw footer: card count, dust cost
-7. Return BytesIO (PNG)
+      b. Fetch/retrieve card image via Nginx cache or upstream
+      c. Crop and resize to tile dimensions
+4. Open Pillow canvas using class-specific background image (3000 × 2344 px)
+5. For each card tile:
+      a. Paste count label (×2, ×3, etc.) behind card
+      b. Paste card image
+6. Overwrite background branding strip with clean background row
+7. Draw dust cost text with stroke
+8. Return BytesIO (PNG)
 ```
 
 ---
@@ -549,12 +563,12 @@ Passive path respects `auto_detect` flag and channel scope (`all_channels` or `m
 | All-cards JSON | `data/cards_cache.json` + in-memory dict | Written on first fetch; reloaded on bot start |
 | Card images (PNG) | Nginx volume (`/var/cache/nginx/`) | Permanent (card art never changes for a given dbfId) |
 | Rendered deck images | Not cached — generated on each request | Fast to regenerate (< 1 s) |
-| Leaderboard entries | SQLite `ldb_current_entries` | Upserted every 5 min (top 500) and 30 min (full) |
-| BattleTag registrations | SQLite `user_battletags` | Persistent until user runs `/rankremove` |
-| Guild settings | SQLite `guild_settings` + `monitored_channels` | Persistent; updated via `/botadmin` commands |
+| Leaderboard entries | PostgreSQL `ldb_current_entries` | Upserted every 5 min (top 500) and 30 min (full) |
+| BattleTag registrations | PostgreSQL `user_battletags` | Persistent until user runs `/rankremove` |
+| Guild settings | PostgreSQL `guild_settings` + `monitored_channels` | Persistent; updated via `/botadmin` commands |
 
-The Nginx container mounts a named Docker volume (`card-cache`).  
-On a cache miss, Nginx proxies the request to `art.hearthstonejson.com` and stores the response on the volume.  
+The Nginx container mounts a bind-mounted volume (`./docker/cache/cards`).
+On a cache miss, Nginx proxies the request to `art.hearthstonejson.com` and stores the response on disk.
 The bot requests images through the Nginx endpoint (`http://cache/...`) rather than upstream directly.
 
 ---
@@ -565,30 +579,53 @@ The bot requests images through the Nginx endpoint (`http://cache/...`) rather t
 
 | Container | Image | Role |
 |---|---|---|
-| `hs-snake-bot` | `python:3.12-slim` | Discord bot process |
-| `hs-snake-cache` | `nginx:alpine` | Card image proxy/cache |
+| `hs-snake-bot` | `ghcr.io/deesnow/hs-snake:<tag>` | Discord bot process |
+| `hs-snake-cache` | `nginx:1.27-alpine` | Card image proxy/cache |
+| `hs-snake-postgres` | `postgres:16-alpine` | Persistent database |
+
+### Versioning
+
+The Docker image is built and tagged by the CI pipeline (`.github/workflows/docker-publish.yml`):
+
+| Git event | Image tag(s) |
+|---|---|
+| Push to `main` | `:latest` |
+| Push to `rc` branch | `:rc` |
+| Git tag `v0.5.1` | `:v0.5.1`, `:0.5`, `:latest` |
+
+The git tag version is injected as a Docker build arg (`BOT_VERSION`) and baked into the image as an env var. The bot reads it via `os.getenv("BOT_VERSION", "dev")` and displays it in the Discord presence and startup log.
 
 ### docker-compose.yml (summary)
 
 ```yaml
 services:
   bot:
-    build: ./docker/bot
+    image: ghcr.io/deesnow/hs-snake:${BOT_TAG:-latest}
     env_file: .env
-    depends_on: [cache]
+    depends_on:
+      cache: { condition: service_healthy }
+      postgres: { condition: service_healthy }
     volumes:
-      - ./data:/app/data       # SQLite DB + cards_cache.json
+      - ./data:/app/data
+      - ./log:/app/logs
     restart: unless-stopped
 
   cache:
-    image: nginx:alpine
+    image: nginx:1.27-alpine
     volumes:
       - ./docker/cache/nginx.conf:/etc/nginx/nginx.conf:ro
-      - card-cache:/var/cache/nginx
+      - ./docker/cache/cards:/var/cache/nginx/cards
     restart: unless-stopped
 
-volumes:
-  card-cache:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: hs-snake_user
+      POSTGRES_PASSWORD: hs-snake_password
+      POSTGRES_DB: hs-snake_db
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
 ```
 
 ### Environment Variables
@@ -603,7 +640,12 @@ volumes:
 | `COMMAND_PREFIX` | Legacy text command prefix | `!` |
 | `LOG_LEVEL` | Logging verbosity | `INFO` |
 | `LOG_FILE` | Optional path to write logs to a file | — |
-| `DB_PATH` | SQLite database path | `data/bot.db` |
+| `BOT_VERSION` | Injected by CI from git tag; shown in Discord presence | `dev` |
+| `POSTGRES_HOST` | PostgreSQL host (set automatically by Docker Compose) | `postgres` |
+| `POSTGRES_PORT` | PostgreSQL port | `5432` |
+| `POSTGRES_USER` | PostgreSQL user | — |
+| `POSTGRES_PASSWORD` | PostgreSQL password | — |
+| `POSTGRES_DB` | PostgreSQL database name | — |
 
 ---
 
@@ -627,19 +669,19 @@ volumes:
 - [x] **T-08** — Implement `DeckDecoder.decode(code: str) → DeckInfo`
 - [x] **T-09** — Map decoded dbfIds to `CardInfo` objects using `HSJsonClient`
 - [x] **T-10** — Group cards by type (Minion / Spell / Weapon / Hero / Location)
-- [x] **T-11** — Write unit tests for several known deck codes
+- [x] **T-11** — Write unit tests for known deck codes including E.T.C. sideboard
 
 ### Phase 4 — Deck Commands ✅
 
-- [x] **T-12** — Implement `/deck` — simple card list with rarity icons, dust cost, format
-- [x] **T-13** — Implement `/deckanalyze` — grouped embed with monospace tables and mana curve
+- [x] **T-12** — Implement `/deck` — simple card list with rarity icons, dust cost, format, E.T.C. sideboard section
+- [x] **T-13** — Implement `/deckanalyze` — grouped embed with monospace tables, mana curve, E.T.C. sideboard field
 - [x] **T-14** — Implement `/deckimage` — render and attach PNG via `ImageGenerator`
 
 ### Phase 5 — Image Generation ✅
 
 - [x] **T-15** — Implement `HSJsonClient.get_card_image_bytes()`: fetch via Nginx cache
-- [x] **T-16** — Build Pillow image layout: header, card rows, footer
-- [x] **T-17** — Style elements: rarity strips, mana bubbles, fonts, dark background
+- [x] **T-16** — Build Pillow image layout using class background images and card grid
+- [x] **T-17** — Style elements: count labels, dust cost footer, branding strip
 
 ### Phase 6 — Card Search ✅
 
@@ -649,13 +691,13 @@ volumes:
 ### Phase 7 — Legend Rank Tracking ✅
 
 - [x] **T-20** — Implement `LeaderboardClient` with rate limiting and retry logic
-- [x] **T-21** — Implement `LeaderboardCache` with SQLite live-upsert table
+- [x] **T-21** — Implement `LeaderboardCache` with PostgreSQL live-upsert table
 - [x] **T-22** — Implement `/rankset`, `/rankremove`, `/rank` commands
 - [x] **T-23** — Add background refresh tasks (5 min top-500, 30 min full)
 
 ### Phase 8 — Per-Guild Config & Auto-Detection ✅
 
-- [x] **T-24** — Design SQLite schema; implement `db.py` with auto-migration
+- [x] **T-24** — Design PostgreSQL schema; implement `db.py` with auto-migration
 - [x] **T-25** — Implement `GuildSettings` CRUD service
 - [x] **T-26** — Implement `/botadmin` command group (setrole, autodetect, channels, status)
 - [x] **T-27** — Implement `AutoDetectCog` with regex pipeline and @mention path
@@ -663,13 +705,20 @@ volumes:
 ### Phase 9 — Cache Container & Docker ✅
 
 - [x] **T-28** — Write `nginx.conf` for proxy caching of `art.hearthstonejson.com`
-- [x] **T-29** — Write `Dockerfile` (multi-stage, slim final layer)
+- [x] **T-29** — Write `Dockerfile` (multi-stage, slim final layer, `BOT_VERSION` build arg)
 - [x] **T-30** — Write `docker-compose.yml` (prod) and `docker-compose.dev.yml` (dev)
+- [x] **T-31** — Configure CI pipeline for automated image builds and semver tagging
 
 ### Phase 10 — Polish & Error Handling ✅
 
-- [x] **T-31** — Global error handling for invalid deck codes, unknown cards, API outages
-- [x] **T-32** — Structured logging with configurable level and optional file output
+- [x] **T-32** — Global error handling for invalid deck codes, unknown cards, API outages
+- [x] **T-33** — Structured logging with configurable level and optional file output
+
+### Phase 11 — E.T.C. Band Manager Sideboard Support ✅
+
+- [x] **T-34** — Read `raw_deck.sideboards` in `DeckDecoder`; populate `DeckInfo.etc_sideboard_cards`
+- [x] **T-35** — Show E.T.C. sideboard in `/deck`, `/deckanalyze`, and `/deckimage`
+- [x] **T-36** — Unit test for deck code containing E.T.C. sideboard cards
 
 ---
 
@@ -677,6 +726,7 @@ volumes:
 
 | Idea | Notes |
 |---|---|
+| Zilliax 3000 sideboard | Card `102983` uses the same sideboard mechanism — expose its module selection similarly to E.T.C. |
 | Deck comparison | `/deckdiff code1 code2` — show added/removed cards between two versions |
 | HSReplay integration | Show winrate / meta tier for a pasted deck |
 | Per-user rank history | Track rank over time and show a sparkline graph |
@@ -684,6 +734,5 @@ volumes:
 | Auto-update card DB | Scheduled task to pull new set data automatically on patch day |
 | Multi-language support | Locale-aware card names via HSJSON locale param (currently `enUS` only) |
 | Slash-command rate limiting | Per-user cooldown to prevent abuse of image generation commands |
-| Redis leaderboard cache | Replace SQLite with Redis for multi-instance / horizontal scaling |
-| `/deckimport` to clipboard | Browser extension or bookmarklet companion to copy deck codes |
+| Redis leaderboard cache | Replace PostgreSQL leaderboard table with Redis for lower-latency lookups |
 | Standalone web UI | Export deck list as HTML / PDF from a companion web service |
