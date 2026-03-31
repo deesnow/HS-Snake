@@ -2,7 +2,9 @@
 
 A Discord bot for Hearthstone: decode deck codes, visualise decks, search cards, look up legend ranks, and auto-detect deck codes posted anywhere in your server.
 
-See [INSTALL.md](INSTALL.md) for setup and deployment instructions.
+**[➕ Add HS-Snake to your server](https://discord.com/oauth2/authorize?client_id=1484526968929255547&permissions=379968&integration_type=0&scope=bot+applications.commands)**
+
+See [INSTALL.md](INSTALL.md) for self-hosting instructions.
 See [DESIGN.md](DESIGN.md) for the full architecture and task breakdown.
 
 ---
@@ -74,6 +76,12 @@ This project was inspired by two open-source Hearthstone tools:
 
 - [d0nkey.top](https://github.com/borisbabic/d0nkey.top) — Hearthstone statistics and deck tracking platform; reference for deck code parsing, sideboard handling, and leaderboard data.
 - [HearthstoneDeckViewDS](https://github.com/hextract/HearthstoneDeckViewDS) — deck image rendering; reference for the visual card grid layout.
+
+---
+
+## Contact
+
+Discord: **Deesnow#0840**
 
 ---
 
