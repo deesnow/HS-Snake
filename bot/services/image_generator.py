@@ -99,6 +99,13 @@ _LBL_DY_FRAC = 650 / 697   # ≈ 0.933  — label top near card bottom, pasted u
 # A gap of 0.13 × card_h ensures it is fully visible between rows.
 ROW_GAP_FRAC = 0.13
 
+# ── E.T.C. Band Manager dbfId ─────────────────────────────────────────
+# Sideboard cards are placed immediately after ETC in the grid and
+# rendered with a pale overlay + a gold bracket around the whole group.
+ETC_DBF_ID = 90749
+ETC_BRACKET_COLOR = (255, 200, 50, 230)   # gold
+ETC_SIDEBOARD_TINT = (220, 220, 255, 110) # pale blue-white overlay
+
 
 def _fixed_crop(im: Image.Image) -> Image.Image:
     """Crop a fixed number of pixels from each side (based on minion frame
@@ -159,11 +166,29 @@ class ImageGenerator:
         self._client = hs_client
 
     async def generate_deck_image(self, deck: DeckInfo) -> io.BytesIO:
-        entries = sorted(
+        sorted_main = sorted(
             deck.cards, key=lambda e: (e.card.cost, e.card.card_type, e.card.name)
         )
+
+        # ETC group tracking: indices in the final entries list
+        etc_group_start: int | None = None
+        etc_group_size: int = 0
+
         if deck.etc_sideboard_cards:
-            entries += sorted(deck.etc_sideboard_cards, key=lambda e: (e.card.cost, e.card.name))
+            sorted_side = sorted(
+                deck.etc_sideboard_cards, key=lambda e: (e.card.cost, e.card.name)
+            )
+            entries: list[CardEntry] = []
+            for e in sorted_main:
+                if e.card.dbf_id == ETC_DBF_ID and etc_group_start is None:
+                    etc_group_start = len(entries)
+                    etc_group_size = 1 + len(sorted_side)
+                entries.append(e)
+                if e.card.dbf_id == ETC_DBF_ID and etc_group_start == len(entries) - 1:
+                    entries.extend(sorted_side)
+        else:
+            entries = sorted_main
+
         n = len(entries)
 
         card_w, card_h, cols = _calc_card_size(n)
@@ -210,11 +235,21 @@ class ImageGenerator:
 
         # ── Place cards ───────────────────────────────────────────────
         row_gap = round(card_h * ROW_GAP_FRAC)
+        etc_group_positions: list[tuple[int, int]] = []
         for idx, (entry, raw) in enumerate(zip(entries, image_data)):
             # Index-based placement: no wrap trigger.
             # Row gap leaves space for the count label to protrude below cards.
             x = (idx % cols) * card_w
             y = (idx // cols) * (card_h + row_gap)
+
+            # Track ETC group card positions for bracket + tint
+            in_etc_group = (
+                etc_group_start is not None
+                and etc_group_start <= idx < etc_group_start + etc_group_size
+            )
+            is_sideboard = in_etc_group and idx > etc_group_start
+            if in_etc_group:
+                etc_group_positions.append((x, y))
 
             # ── Count label — pasted BEFORE the card so the card image
             #    covers its top; the bottom protrudes below the card frame
@@ -234,6 +269,26 @@ class ImageGenerator:
                     canvas.paste(im, (x, y), mask=im)
                 except Exception:
                     log.debug("Failed to render card %s", entry.card.card_id)
+
+            # Pale tint overlay for sideboard cards (applied after the card image)
+            if is_sideboard:
+                tint = Image.new("RGBA", (card_w, card_h), ETC_SIDEBOARD_TINT)
+                canvas.paste(tint, (x, y), mask=tint)
+
+        # ── ETC group bracket ─────────────────────────────────────────
+        if etc_group_positions:
+            bracket_draw = ImageDraw.Draw(canvas)
+            gx0 = min(p[0] for p in etc_group_positions)
+            gy0 = min(p[1] for p in etc_group_positions)
+            gx1 = max(p[0] for p in etc_group_positions) + card_w
+            gy1 = max(p[1] for p in etc_group_positions) + card_h
+            pad = max(3, card_w // 120)
+            bw  = max(5, card_w // 80)
+            bracket_draw.rectangle(
+                [gx0 - pad, gy0 - pad, gx1 + pad, gy1 + pad],
+                outline=ETC_BRACKET_COLOR,
+                width=bw,
+            )
 
         # ── Dust cost + branding footer ──────────────────────────────────────
         total_dust = sum(_dust_cost(e.card.rarity, e.count) for e in entries)
