@@ -371,10 +371,21 @@ class RankCommands(commands.Cog):
     async def _fetch_entry(battletag, region, mode, discord_id):
         needle = battletag.lower().split("#")[0]
         async with get_db() as conn:
+            # Current season is always derived from the live leaderboard, never from player data.
+            season_id = await conn.fetchval(
+                "SELECT MAX(season_id) FROM ldb_current_entries WHERE region = $1 AND mode = $2",
+                region.upper(), mode.lower(),
+            )
+            if season_id is None:
+                raise RuntimeError(
+                    f"Leaderboard data for {region}/{mode} is not available yet. "
+                    "The bot is still loading data in the background — please try again in a few minutes."
+                )
+
             # Primary: most recent tracked observation for this registered player.
             row = await conn.fetchrow(
                 """
-                SELECT rank, rating, season_id
+                SELECT rank, rating
                 FROM player_rank_log
                 WHERE discord_id = $1 AND region = $2 AND mode = $3
                 ORDER BY observed_at DESC
@@ -388,12 +399,12 @@ class RankCommands(commands.Cog):
                     battletag=needle,
                     battletag_orig=battletag,
                     rating=row["rating"],
-                ), row["season_id"]
+                ), season_id
 
             # Fallback: direct index lookup in ldb_current_entries.
             ldb_row = await conn.fetchrow(
                 """
-                SELECT rank, battletag, battletag_orig, rating, season_id
+                SELECT rank, battletag, battletag_orig, rating
                 FROM ldb_current_entries
                 WHERE region = $1 AND mode = $2 AND battletag = $3
                 LIMIT 1
@@ -406,18 +417,8 @@ class RankCommands(commands.Cog):
                     battletag=ldb_row["battletag"],
                     battletag_orig=ldb_row["battletag_orig"],
                     rating=ldb_row["rating"],
-                ), ldb_row["season_id"]
+                ), season_id
 
-            # Player not found — get season_id from any row, or raise if DB is empty.
-            season_id = await conn.fetchval(
-                "SELECT season_id FROM ldb_current_entries WHERE region = $1 AND mode = $2 LIMIT 1",
-                region.upper(), mode.lower(),
-            )
-            if season_id is None:
-                raise RuntimeError(
-                    f"Leaderboard data for {region}/{mode} is not available yet. "
-                    "The bot is still loading data in the background — please try again in a few minutes."
-                )
             return None, season_id
 
 
