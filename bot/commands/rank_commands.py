@@ -382,16 +382,16 @@ class RankCommands(commands.Cog):
                     "The bot is still loading data in the background — please try again in a few minutes."
                 )
 
-            # Primary: most recent tracked observation for this registered player.
+            # Primary: most recent tracked observation for this registered player in the current season.
             row = await conn.fetchrow(
                 """
                 SELECT rank, rating
                 FROM player_rank_log
-                WHERE discord_id = $1 AND region = $2 AND mode = $3
+                WHERE discord_id = $1 AND region = $2 AND mode = $3 AND season_id = $4
                 ORDER BY observed_at DESC
                 LIMIT 1
                 """,
-                discord_id, region.upper(), mode.lower(),
+                discord_id, region.upper(), mode.lower(), season_id,
             )
             if row:
                 return LeaderboardEntry(
