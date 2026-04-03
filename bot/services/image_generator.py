@@ -103,8 +103,9 @@ ROW_GAP_FRAC = 0.13
 # Sideboard cards are placed immediately after ETC in the grid and
 # rendered with a pale overlay + a gold bracket around the whole group.
 ETC_DBF_ID = 90749
-ETC_BRACKET_COLOR = (255, 200, 50, 230)   # gold
-ETC_SIDEBOARD_TINT = (220, 220, 255, 110) # pale blue-white overlay
+ETC_BRACKET_COLOR    = (255, 200,  50, 230)   # gold
+ETC_SIDEBOARD_TINT   = (220, 220, 255, 110)   # pale blue-white overlay
+
 
 
 def _fixed_crop(im: Image.Image) -> Image.Image:
@@ -170,24 +171,29 @@ class ImageGenerator:
             deck.cards, key=lambda e: (e.card.cost, e.card.card_type, e.card.name)
         )
 
-        # ETC group tracking: indices in the final entries list
+        sorted_etc_side = (
+            sorted(deck.etc_sideboard_cards, key=lambda e: (e.card.cost, e.card.name))
+            if deck.etc_sideboard_cards else []
+        )
+
+        # ── Build flat entries list ────────────────────────────────────
+        # ETC sideboard cards are injected immediately after ETC.
+        # Fabled companions are already included in sorted_main (deck.cards).
+        entries: list[CardEntry] = []
         etc_group_start: int | None = None
         etc_group_size: int = 0
 
-        if deck.etc_sideboard_cards:
-            sorted_side = sorted(
-                deck.etc_sideboard_cards, key=lambda e: (e.card.cost, e.card.name)
-            )
-            entries: list[CardEntry] = []
-            for e in sorted_main:
-                if e.card.dbf_id == ETC_DBF_ID and etc_group_start is None:
-                    etc_group_start = len(entries)
-                    etc_group_size = 1 + len(sorted_side)
-                entries.append(e)
-                if e.card.dbf_id == ETC_DBF_ID and etc_group_start == len(entries) - 1:
-                    entries.extend(sorted_side)
-        else:
-            entries = sorted_main
+        for e in sorted_main:
+            card_idx = len(entries)
+
+            if e.card.dbf_id == ETC_DBF_ID and etc_group_start is None and sorted_etc_side:
+                etc_group_start = card_idx
+                etc_group_size = 1 + len(sorted_etc_side)
+
+            entries.append(e)
+
+            if e.card.dbf_id == ETC_DBF_ID and sorted_etc_side and etc_group_start == card_idx:
+                entries.extend(sorted_etc_side)
 
         n = len(entries)
 
@@ -236,24 +242,22 @@ class ImageGenerator:
         # ── Place cards ───────────────────────────────────────────────
         row_gap = round(card_h * ROW_GAP_FRAC)
         etc_group_positions: list[tuple[int, int]] = []
+
         for idx, (entry, raw) in enumerate(zip(entries, image_data)):
-            # Index-based placement: no wrap trigger.
-            # Row gap leaves space for the count label to protrude below cards.
             x = (idx % cols) * card_w
             y = (idx // cols) * (card_h + row_gap)
 
-            # Track ETC group card positions for bracket + tint
+            # ETC group membership
             in_etc_group = (
                 etc_group_start is not None
                 and etc_group_start <= idx < etc_group_start + etc_group_size
             )
-            is_sideboard = in_etc_group and idx > etc_group_start
+            is_etc_sideboard = in_etc_group and idx > etc_group_start
             if in_etc_group:
                 etc_group_positions.append((x, y))
 
             # ── Count label — pasted BEFORE the card so the card image
-            #    covers its top; the bottom protrudes below the card frame
-            #    (clear of the tribe/spell-school text area).
+            #    covers its top; the bottom protrudes below the card frame.
             if entry.count >= 2:
                 label = _load_label(entry.count) if entry.count > 2 else label_default
                 if label:
@@ -262,16 +266,13 @@ class ImageGenerator:
             if raw:
                 try:
                     im = Image.open(io.BytesIO(raw)).convert("RGBA")
-                    # Fixed-pixel crop: same amount removed from every card type
-                    # so all cards look the same size (no per-card alpha detection).
                     im = _fixed_crop(im)
                     im = im.resize((card_w, card_h), Image.LANCZOS)
                     canvas.paste(im, (x, y), mask=im)
                 except Exception:
                     log.debug("Failed to render card %s", entry.card.card_id)
 
-            # Pale tint overlay for sideboard cards (applied after the card image)
-            if is_sideboard:
+            if is_etc_sideboard:
                 tint = Image.new("RGBA", (card_w, card_h), ETC_SIDEBOARD_TINT)
                 canvas.paste(tint, (x, y), mask=tint)
 
@@ -280,18 +281,12 @@ class ImageGenerator:
             bracket_draw = ImageDraw.Draw(canvas)
             pad = max(3, card_w // 120)
             bw  = max(5, card_w // 80)
-            # Group positions by row so the bracket only wraps the actual
-            # cells in each row (not the full canvas width when the group
-            # spans multiple rows).
             rows_map: dict[int, list[int]] = {}
             for (px, py) in etc_group_positions:
-                row_key = py  # y coord uniquely identifies the row
-                rows_map.setdefault(row_key, []).append(px)
+                rows_map.setdefault(py, []).append(px)
             for ry, xs in rows_map.items():
-                rx0 = min(xs)
-                rx1 = max(xs) + card_w
                 bracket_draw.rectangle(
-                    [rx0 - pad, ry - pad, rx1 + pad, ry + card_h + pad],
+                    [min(xs) - pad, ry - pad, max(xs) + card_w + pad, ry + card_h + pad],
                     outline=ETC_BRACKET_COLOR,
                     width=bw,
                 )

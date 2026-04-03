@@ -83,9 +83,22 @@ class DeckDecoder:
         for dbf_id, count in raw_deck.cards:
             card = await self._client.get_card(dbf_id)
             if card is None:
-                log.warning("Unknown dbfId=%s in deck, skipping", dbf_id)
+                # Fabled companion dbfIds appear in the deck code alongside the
+                # fabled card itself; we add them via get_fabled_companions below,
+                # so silently skip them here instead of logging a warning.
+                if not await self._client.is_fabled_companion(dbf_id):
+                    log.warning("Unknown dbfId=%s in deck, skipping", dbf_id)
                 continue
             card_entries.append(CardEntry(card=card, count=count))
+            # Fabled cards automatically bring companion cards — add them to the
+            # main card list so they appear in every deck view sorted by mana cost.
+            companions = await self._client.get_fabled_companions(card.card_id)
+            for companion in companions:
+                card_entries.append(CardEntry(card=companion, count=1))
+            if companions:
+                log.debug(
+                    "Fabled card %s → %d companions added", card.name, len(companions)
+                )
 
         _ETC_BAND_MANAGER = 90749
         etc_entries: list[CardEntry] = []
