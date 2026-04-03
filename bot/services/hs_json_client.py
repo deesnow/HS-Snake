@@ -8,6 +8,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from pathlib import Path
 from typing import Optional
@@ -28,25 +29,26 @@ _HSJSON_ART_URL = (
 
 # Singleton lock so multiple cogs share one loaded DB
 _db_lock = asyncio.Lock()
-_card_db: dict[int, CardInfo] = {}          # dbfId → CardInfo
-_name_index: dict[str, CardInfo] = {}       # lower-name → CardInfo
+_card_db: dict[int, CardInfo] = {}                      # dbfId → CardInfo (collectible only)
+_name_index: dict[str, CardInfo] = {}                   # lower-name → CardInfo
+_fabled_companions_by_card_id: dict[str, list[CardInfo]] = {}  # fabled card_id → companions
+_companion_dbf_ids: set[int] = set()                    # all companion dbfIds (for skip logic)
+
+# Companions are non-collectible tokens whose card ID matches {fabled_base}t followed
+# by only digits (e.g. TIME_852t1, TIME_852t3).  Deeper sub-tokens like TIME_020t2t or
+# TIME_005t2e are excluded by this pattern.
+_COMPANION_SUFFIX_RE = re.compile(r"^t\d*$")
 
 _CACHE_TTL_SECONDS = 86_400                 # 24 hours
 _CACHE_FILE = Path(os.getenv("DATA_DIR", "./data")) / "cards_cache.json"
 
 
-def _parse_card(raw: dict) -> Optional[CardInfo]:
-    """Convert a raw JSON card object into a CardInfo, or None if unusable.
-
-    Only collectible cards are kept — this excludes Mercenaries, tokens,
-    hero powers, tavern brawl exclusives, and other non-deck-playable cards.
-    """
+def _build_card_info(raw: dict) -> Optional[CardInfo]:
+    """Convert a raw JSON card object into a CardInfo, or None if unusable."""
     dbf_id = raw.get("dbfId")
     card_id = raw.get("id")
     name = raw.get("name")
     if not (dbf_id and card_id and name):
-        return None
-    if not raw.get("collectible"):
         return None
     return CardInfo(
         dbf_id=int(dbf_id),
@@ -67,6 +69,23 @@ def _parse_card(raw: dict) -> Optional[CardInfo]:
     )
 
 
+def _parse_card(raw: dict) -> Optional[CardInfo]:
+    """Return a CardInfo only for collectible cards."""
+    if not raw.get("collectible"):
+        return None
+    return _build_card_info(raw)
+
+
+def _is_fabled_raw(raw: dict) -> bool:
+    """True if the raw card JSON represents a fabled card.
+
+    In hearthstonejson the fabled keyword lives in the card text as
+    '<b>Fabled</b>', not in the mechanics array.
+    """
+    text: str = raw.get("text") or ""
+    return bool(re.search(r"\bFabled\b", text, re.IGNORECASE))
+
+
 class HSJsonClient:
     """Fetches and caches Hearthstone card data from HearthstoneJSON."""
 
@@ -84,7 +103,7 @@ class HSJsonClient:
 
     async def ensure_loaded(self) -> None:
         """Load the card DB once per process; uses a disk cache valid for 24 h."""
-        global _card_db, _name_index
+        global _card_db, _name_index, _fabled_companions_by_card_id, _companion_dbf_ids
         async with _db_lock:
             if _card_db:
                 return
@@ -119,9 +138,55 @@ class HSJsonClient:
                     _name_index[card.name.lower()] = card
             log.info("Card database loaded: %d collectible cards", len(_card_db))
 
+            # Build fabled companion lookup.
+            # hearthstonejson has no childIds field; companions are identified by
+            # card ID suffix: a fabled card TIME_852 has companions TIME_852t1,
+            # TIME_852t3, etc. (the suffix after the base ID matches /^t\d*$/).
+            # Sub-tokens like TIME_020t2t or TIME_005t2e are excluded automatically.
+            fabled_card_ids: set[str] = {
+                raw["id"]
+                for raw in raw_cards
+                if raw.get("id") and raw.get("collectible") and _is_fabled_raw(raw)
+            }
+            log.debug("Fabled collectible cards found: %d", len(fabled_card_ids))
+
+            for raw in raw_cards:
+                if raw.get("collectible") or not raw.get("id"):
+                    continue
+                card_id: str = raw["id"]
+                for fabled_id in fabled_card_ids:
+                    if not card_id.startswith(fabled_id):
+                        continue
+                    suffix = card_id[len(fabled_id):]
+                    if _COMPANION_SUFFIX_RE.match(suffix):
+                        companion = _build_card_info(raw)
+                        if companion:
+                            _fabled_companions_by_card_id.setdefault(fabled_id, []).append(companion)
+                            _companion_dbf_ids.add(companion.dbf_id)
+                        break
+
+            total_companions = sum(len(v) for v in _fabled_companions_by_card_id.values())
+            log.info(
+                "Fabled companion DB built: %d companions across %d fabled cards",
+                total_companions, len(_fabled_companions_by_card_id),
+            )
+
     async def get_card(self, dbf_id: int) -> Optional[CardInfo]:
         await self.ensure_loaded()
         return _card_db.get(dbf_id)
+
+    async def get_fabled_companions(self, card_id: str) -> list[CardInfo]:
+        """Return the fabled companion CardInfos for a given collectible card_id.
+
+        Returns an empty list if the card is not fabled or has no companions.
+        """
+        await self.ensure_loaded()
+        return list(_fabled_companions_by_card_id.get(card_id, []))
+
+    async def is_fabled_companion(self, dbf_id: int) -> bool:
+        """True if this dbfId is a non-collectible fabled companion card."""
+        await self.ensure_loaded()
+        return dbf_id in _companion_dbf_ids
 
     async def find_card_by_name(self, name: str) -> Optional[CardInfo]:
         """Case-insensitive exact match first, then partial match."""
