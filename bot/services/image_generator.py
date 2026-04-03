@@ -278,17 +278,23 @@ class ImageGenerator:
         # ── ETC group bracket ─────────────────────────────────────────
         if etc_group_positions:
             bracket_draw = ImageDraw.Draw(canvas)
-            gx0 = min(p[0] for p in etc_group_positions)
-            gy0 = min(p[1] for p in etc_group_positions)
-            gx1 = max(p[0] for p in etc_group_positions) + card_w
-            gy1 = max(p[1] for p in etc_group_positions) + card_h
             pad = max(3, card_w // 120)
             bw  = max(5, card_w // 80)
-            bracket_draw.rectangle(
-                [gx0 - pad, gy0 - pad, gx1 + pad, gy1 + pad],
-                outline=ETC_BRACKET_COLOR,
-                width=bw,
-            )
+            # Group positions by row so the bracket only wraps the actual
+            # cells in each row (not the full canvas width when the group
+            # spans multiple rows).
+            rows_map: dict[int, list[int]] = {}
+            for (px, py) in etc_group_positions:
+                row_key = py  # y coord uniquely identifies the row
+                rows_map.setdefault(row_key, []).append(px)
+            for ry, xs in rows_map.items():
+                rx0 = min(xs)
+                rx1 = max(xs) + card_w
+                bracket_draw.rectangle(
+                    [rx0 - pad, ry - pad, rx1 + pad, ry + card_h + pad],
+                    outline=ETC_BRACKET_COLOR,
+                    width=bw,
+                )
 
         # ── Dust cost + branding footer ──────────────────────────────────────
         total_dust = sum(_dust_cost(e.card.rarity, e.count) for e in entries)
