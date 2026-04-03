@@ -53,19 +53,19 @@ BRAND_MARGIN   = 40     # px from right + bottom edges
 
 # ── Class → background file ID ─────────────────────────────────────────
 CLASS_BACK_IDS: dict[str, int] = {
-    "Warrior":      1,
-    "Paladin":      2,
+    "Warrior":      10,
+    "Paladin":      5,
     "Hunter":       3,
-    "Rogue":        4,
-    "Priest":       5,
-    "Shaman":       6,
-    "Mage":         7,
-    "Warlock":      8,
-    "Druid":        9,
-    "Demon Hunter": 10,
-    "Demonhunter":  10,
-    "Death Knight": 14,
-    "Deathknight":  14,
+    "Rogue":        7,
+    "Priest":       6,
+    "Shaman":       8,
+    "Mage":         4,
+    "Warlock":      9,
+    "Druid":        2,
+    "Demon Hunter": 14,
+    "Demonhunter":  14,
+    "Death Knight": 1,
+    "Deathknight":  1,
 }
 
 # ── Card aspect ratio ─────────────────────────────────────────────────
