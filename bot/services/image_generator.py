@@ -48,24 +48,24 @@ DUST_SIZE   = 140    # Belwe font size at 3000 px canvas width
 BRAND_COVER_X  = 2100   # x from which the text erasure begins
 BRAND_COVER_Y  = 2170   # y at which the baked-in text starts
 BRAND_CLONE_Y  = 2155   # y of the clean background row used as fill source
-BRAND_TITLE    = "Deck Viewer"
+BRAND_TITLE    = "Jeeves - at Your Service"  # text to paste in the bottom-right corner
 BRAND_MARGIN   = 40     # px from right + bottom edges
 
 # ── Class → background file ID ─────────────────────────────────────────
 CLASS_BACK_IDS: dict[str, int] = {
-    "Warrior":      10,
-    "Paladin":      5,
-    "Hunter":       3,
-    "Rogue":        7,
-    "Priest":       6,
-    "Shaman":       8,
-    "Mage":         4,
-    "Warlock":      9,
-    "Druid":        2,
-    "Demon Hunter": 14,
-    "Demonhunter":  14,
-    "Death Knight": 1,
-    "Deathknight":  1,
+    "Warrior":      21,
+    "Paladin":      31,
+    "Hunter":       27,
+    "Rogue":        22,
+    "Priest":       25,
+    "Shaman":       24,
+    "Mage":         30,
+    "Warlock":      28,
+    "Druid":        23,
+    "Demon Hunter": 29,
+    "Demonhunter":  29,
+    "Death Knight": 26,
+    "Deathknight":  26,
 }
 
 # ── Card aspect ratio ─────────────────────────────────────────────────
@@ -322,9 +322,8 @@ class ImageGenerator:
         font_brand = font_dust
         bbox  = draw.textbbox((0, 0), BRAND_TITLE, font=font_brand)
         bw    = bbox[2] - bbox[0]
-        bh    = bbox[3] - bbox[1]
         bx    = CANVAS_W - bw - BRAND_MARGIN
-        by    = CANVAS_H - bh - BRAND_MARGIN
+        by    = DUST_Y
         draw.text(
             (bx, by),
             BRAND_TITLE,
