@@ -48,7 +48,7 @@ DUST_SIZE   = 140    # Belwe font size at 3000 px canvas width
 BRAND_COVER_X  = 2100   # x from which the text erasure begins
 BRAND_COVER_Y  = 2170   # y at which the baked-in text starts
 BRAND_CLONE_Y  = 2155   # y of the clean background row used as fill source
-BRAND_TITLE    = "Deck Viewer"
+BRAND_TITLE    = "Jeeves - at Your Service"  # text to paste in the bottom-right corner
 BRAND_MARGIN   = 40     # px from right + bottom edges
 
 # ── Class → background file ID ─────────────────────────────────────────
@@ -322,9 +322,8 @@ class ImageGenerator:
         font_brand = font_dust
         bbox  = draw.textbbox((0, 0), BRAND_TITLE, font=font_brand)
         bw    = bbox[2] - bbox[0]
-        bh    = bbox[3] - bbox[1]
         bx    = CANVAS_W - bw - BRAND_MARGIN
-        by    = CANVAS_H - bh - BRAND_MARGIN
+        by    = DUST_Y
         draw.text(
             (bx, by),
             BRAND_TITLE,
