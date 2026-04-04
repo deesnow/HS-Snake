@@ -62,6 +62,10 @@ class HsSnakeBot(commands.Bot):
                 name=f"Hearthstone Assistant v{__version__} - by DeeSnow",
             )
         )
+        try:
+            await self.user.edit(bio=f"Hearthstone Assistant bot — decks, cards, rankings and more.\nCheck out the project on GitHub: https://github.com/deesnow/HS-Snake")
+        except discord.HTTPException as e:
+            log.warning("Could not set bot bio: %s", e)
 
 
 async def main() -> None:
