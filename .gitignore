@@ -40,3 +40,4 @@ DISCORD_SETUP.md
 xx_*/
 bot.sqbpro
 tests/dev_api.py
+tests/test_deck_decoder.py

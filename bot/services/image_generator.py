@@ -106,6 +106,13 @@ ETC_DBF_ID = 90749
 ETC_BRACKET_COLOR    = (255, 200,  50, 230)   # gold
 ETC_SIDEBOARD_TINT   = (220, 220, 255, 110)   # pale blue-white overlay
 
+# ── Zilliax Deluxe 3000 dbfId ─────────────────────────────────────────
+# Module cards are placed immediately after Zilliax and rendered with a
+# pale cyan overlay + a cyan-silver bracket around the whole group.
+ZILLIAX_DBF_ID = 102983
+ZILLIAX_BRACKET_COLOR  = (150, 220, 255, 230)   # cyan-silver
+ZILLIAX_SIDEBOARD_TINT = (200, 230, 255, 110)   # pale cyan overlay
+
 
 
 def _fixed_crop(im: Image.Image) -> Image.Image:
@@ -176,12 +183,19 @@ class ImageGenerator:
             if deck.etc_sideboard_cards else []
         )
 
+        sorted_zilliax_side = (
+            sorted(deck.zilliax_sideboard_cards, key=lambda e: (e.card.cost, e.card.name))
+            if deck.zilliax_sideboard_cards else []
+        )
+
         # ── Build flat entries list ────────────────────────────────────
-        # ETC sideboard cards are injected immediately after ETC.
+        # ETC/Zilliax sideboard cards are injected immediately after their owner.
         # Fabled companions are already included in sorted_main (deck.cards).
         entries: list[CardEntry] = []
         etc_group_start: int | None = None
         etc_group_size: int = 0
+        zilliax_group_start: int | None = None
+        zilliax_group_size: int = 0
 
         for e in sorted_main:
             card_idx = len(entries)
@@ -190,10 +204,17 @@ class ImageGenerator:
                 etc_group_start = card_idx
                 etc_group_size = 1 + len(sorted_etc_side)
 
+            if e.card.dbf_id == ZILLIAX_DBF_ID and zilliax_group_start is None and sorted_zilliax_side:
+                zilliax_group_start = card_idx
+                zilliax_group_size = 1 + len(sorted_zilliax_side)
+
             entries.append(e)
 
             if e.card.dbf_id == ETC_DBF_ID and sorted_etc_side and etc_group_start == card_idx:
                 entries.extend(sorted_etc_side)
+
+            if e.card.dbf_id == ZILLIAX_DBF_ID and sorted_zilliax_side and zilliax_group_start == card_idx:
+                entries.extend(sorted_zilliax_side)
 
         n = len(entries)
 
@@ -242,6 +263,7 @@ class ImageGenerator:
         # ── Place cards ───────────────────────────────────────────────
         row_gap = round(card_h * ROW_GAP_FRAC)
         etc_group_positions: list[tuple[int, int]] = []
+        zilliax_group_positions: list[tuple[int, int]] = []
 
         for idx, (entry, raw) in enumerate(zip(entries, image_data)):
             x = (idx % cols) * card_w
@@ -255,6 +277,15 @@ class ImageGenerator:
             is_etc_sideboard = in_etc_group and idx > etc_group_start
             if in_etc_group:
                 etc_group_positions.append((x, y))
+
+            # Zilliax group membership
+            in_zilliax_group = (
+                zilliax_group_start is not None
+                and zilliax_group_start <= idx < zilliax_group_start + zilliax_group_size
+            )
+            is_zilliax_sideboard = in_zilliax_group and idx > zilliax_group_start
+            if in_zilliax_group:
+                zilliax_group_positions.append((x, y))
 
             # ── Count label — pasted BEFORE the card so the card image
             #    covers its top; the bottom protrudes below the card frame.
@@ -276,6 +307,10 @@ class ImageGenerator:
                 tint = Image.new("RGBA", (card_w, card_h), ETC_SIDEBOARD_TINT)
                 canvas.paste(tint, (x, y), mask=tint)
 
+            if is_zilliax_sideboard:
+                tint = Image.new("RGBA", (card_w, card_h), ZILLIAX_SIDEBOARD_TINT)
+                canvas.paste(tint, (x, y), mask=tint)
+
         # ── ETC group bracket ─────────────────────────────────────────
         if etc_group_positions:
             bracket_draw = ImageDraw.Draw(canvas)
@@ -288,6 +323,21 @@ class ImageGenerator:
                 bracket_draw.rectangle(
                     [min(xs) - pad, ry - pad, max(xs) + card_w + pad, ry + card_h + pad],
                     outline=ETC_BRACKET_COLOR,
+                    width=bw,
+                )
+
+        # ── Zilliax group bracket ─────────────────────────────────────
+        if zilliax_group_positions:
+            bracket_draw = ImageDraw.Draw(canvas)
+            pad = max(3, card_w // 120)
+            bw  = max(5, card_w // 80)
+            rows_map = {}
+            for (px, py) in zilliax_group_positions:
+                rows_map.setdefault(py, []).append(px)
+            for ry, xs in rows_map.items():
+                bracket_draw.rectangle(
+                    [min(xs) - pad, ry - pad, max(xs) + card_w + pad, ry + card_h + pad],
+                    outline=ZILLIAX_BRACKET_COLOR,
                     width=bw,
                 )
 

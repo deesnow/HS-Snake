@@ -26,6 +26,9 @@ async def test_decode_warrior_deck():
     mock_client = MagicMock()
     mock_client.ensure_loaded = AsyncMock()
     mock_client.get_card = AsyncMock(return_value=mock_card)
+    mock_client.get_any_card = AsyncMock(return_value=mock_card)
+    mock_client.get_fabled_companions = AsyncMock(return_value=[])
+    mock_client.is_fabled_companion = AsyncMock(return_value=False)
 
     decoder = DeckDecoder(mock_client)
     deck = await decoder.decode(SAMPLE_WARRIOR_CODE)
@@ -74,6 +77,9 @@ async def test_decode_etc_sideboard_cards():
     mock_client = MagicMock()
     mock_client.ensure_loaded = AsyncMock()
     mock_client.get_card = AsyncMock(side_effect=lambda dbf_id: make_card(dbf_id))
+    mock_client.get_any_card = AsyncMock(side_effect=lambda dbf_id: make_card(dbf_id))
+    mock_client.get_fabled_companions = AsyncMock(return_value=[])
+    mock_client.is_fabled_companion = AsyncMock(return_value=False)
 
     decoder = DeckDecoder(mock_client)
     deck = await decoder.decode(ETC_DECK_CODE)

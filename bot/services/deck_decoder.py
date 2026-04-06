@@ -101,15 +101,36 @@ class DeckDecoder:
                 )
 
         _ETC_BAND_MANAGER = 90749
+        _ZILLIAX_DELUXE_3000 = 102983
         etc_entries: list[CardEntry] = []
+        zilliax_entries: list[CardEntry] = []
         for card_id, count, sideboard_owner in (raw_deck.sideboards or []):
-            if sideboard_owner != _ETC_BAND_MANAGER:
-                continue
-            card = await self._client.get_card(card_id)
-            if card is None:
-                log.warning("Unknown dbfId=%s in E.T.C. sideboard, skipping", card_id)
-                continue
-            etc_entries.append(CardEntry(card=card, count=count))
+            if sideboard_owner == _ETC_BAND_MANAGER:
+                card = await self._client.get_card(card_id)
+                if card is None:
+                    log.warning("Unknown dbfId=%s in E.T.C. sideboard, skipping", card_id)
+                    continue
+                etc_entries.append(CardEntry(card=card, count=count))
+            elif sideboard_owner == _ZILLIAX_DELUXE_3000:
+                card = await self._client.get_any_card(card_id)
+                if card is None:
+                    log.warning("Unknown dbfId=%s in Zilliax sideboard, skipping", card_id)
+                    continue
+                zilliax_entries.append(CardEntry(card=card, count=count))
+
+        if zilliax_entries:
+            from dataclasses import replace
+            # The sideboard includes an assembled Zilliax placeholder (non-collectible,
+            # cost=0, same name as the base card).  Exclude it — only real modules remain.
+            zilliax_entries = [e for e in zilliax_entries if e.card.cost > 0]
+            effective_cost = sum(e.card.cost for e in zilliax_entries)
+            for i, entry in enumerate(card_entries):
+                if entry.card.dbf_id == _ZILLIAX_DELUXE_3000:
+                    card_entries[i] = CardEntry(
+                        card=replace(entry.card, cost=effective_cost),
+                        count=entry.count,
+                    )
+                    break
 
         result = DeckInfo(
             format_id=format_id,
@@ -119,9 +140,10 @@ class DeckDecoder:
             deck_name=deck_name,
             cards=card_entries,
             etc_sideboard_cards=etc_entries,
+            zilliax_sideboard_cards=zilliax_entries,
         )
         log.debug(
-            "decode success class=%s format=%s cards=%d etc_sideboard=%d",
-            hero_class, format_label, len(card_entries), len(etc_entries),
+            "decode success class=%s format=%s cards=%d etc_sideboard=%d zilliax_sideboard=%d",
+            hero_class, format_label, len(card_entries), len(etc_entries), len(zilliax_entries),
         )
         return result

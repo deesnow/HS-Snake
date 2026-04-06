@@ -70,6 +70,13 @@ def build_simple_deck_text(deck, code: str) -> str:
             icon = RARITY_ICON.get(entry.card.rarity.upper(), "⚪")
             lines.append(f"{icon} ({entry.card.cost}) {entry.card.name}")
 
+    if deck.zilliax_sideboard_cards:
+        lines.append(separator)
+        lines.append("**Zilliax Deluxe 3000 modules:**")
+        for entry in sorted(deck.zilliax_sideboard_cards, key=lambda e: e.card.cost):
+            icon = RARITY_ICON.get(entry.card.rarity.upper(), "⚪")
+            lines.append(f"{icon} ({entry.card.cost}) {entry.card.name}")
+
     lines.append(f"\n**Deck Code:**\n{code}")
     return "\n".join(lines)
 
@@ -179,6 +186,12 @@ def build_deck_embed(deck) -> discord.Embed:
         if len(block) > 1024:
             block = block[:1020] + "\n```"
         embed.add_field(name="E.T.C. Band Manager sideboard (3)", value=block, inline=False)
+
+    if deck.zilliax_sideboard_cards:
+        block = _table_block(deck.zilliax_sideboard_cards)
+        if len(block) > 1024:
+            block = block[:1020] + "\n```"
+        embed.add_field(name="Zilliax Deluxe 3000 modules (2)", value=block, inline=False)
 
     embed.add_field(name="Mana Curve", value=_mana_curve_block(deck), inline=False)
 
