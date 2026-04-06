@@ -30,6 +30,7 @@ _HSJSON_ART_URL = (
 # Singleton lock so multiple cogs share one loaded DB
 _db_lock = asyncio.Lock()
 _card_db: dict[int, CardInfo] = {}                      # dbfId → CardInfo (collectible only)
+_all_cards_db: dict[int, CardInfo] = {}                 # dbfId → CardInfo (collectible + non-collectible)
 _name_index: dict[str, CardInfo] = {}                   # lower-name → CardInfo
 _fabled_companions_by_card_id: dict[str, list[CardInfo]] = {}  # fabled card_id → companions
 _companion_dbf_ids: set[int] = set()                    # all companion dbfIds (for skip logic)
@@ -103,7 +104,7 @@ class HSJsonClient:
 
     async def ensure_loaded(self) -> None:
         """Load the card DB once per process; uses a disk cache valid for 24 h."""
-        global _card_db, _name_index, _fabled_companions_by_card_id, _companion_dbf_ids
+        global _card_db, _all_cards_db, _name_index, _fabled_companions_by_card_id, _companion_dbf_ids
         async with _db_lock:
             if _card_db:
                 return
@@ -132,11 +133,13 @@ class HSJsonClient:
                 log.info("Card database saved to disk cache: %s", _CACHE_FILE)
 
             for raw in raw_cards:
-                card = _parse_card(raw)
-                if card:
-                    _card_db[card.dbf_id] = card
-                    _name_index[card.name.lower()] = card
-            log.info("Card database loaded: %d collectible cards", len(_card_db))
+                any_card = _build_card_info(raw)
+                if any_card:
+                    _all_cards_db[any_card.dbf_id] = any_card
+                if raw.get("collectible") and any_card:
+                    _card_db[any_card.dbf_id] = any_card
+                    _name_index[any_card.name.lower()] = any_card
+            log.info("Card database loaded: %d collectible, %d total cards", len(_card_db), len(_all_cards_db))
 
             # Build fabled companion lookup.
             # hearthstonejson has no childIds field; companions are identified by
@@ -174,6 +177,11 @@ class HSJsonClient:
     async def get_card(self, dbf_id: int) -> Optional[CardInfo]:
         await self.ensure_loaded()
         return _card_db.get(dbf_id)
+
+    async def get_any_card(self, dbf_id: int) -> Optional[CardInfo]:
+        """Like get_card, but also finds non-collectible cards (e.g. Zilliax modules)."""
+        await self.ensure_loaded()
+        return _all_cards_db.get(dbf_id)
 
     async def get_fabled_companions(self, card_id: str) -> list[CardInfo]:
         """Return the fabled companion CardInfos for a given collectible card_id.
