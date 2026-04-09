@@ -292,20 +292,31 @@ class RankCommands(commands.Cog):
                 """,
                 discord_id, region, "standard", std_season,
             )
-            std_best = await conn.fetchval(
+            std_today_row = await conn.fetchrow(
                 """
-                SELECT MIN(best_rank) FROM player_daily_best
-                WHERE discord_id = $1 AND region = $2 AND mode = $3 AND season_id = $4
-                """,
-                discord_id, region, "standard", std_season,
-            )
-            std_today_dps = await conn.fetchval(
-                """
-                SELECT dps FROM player_daily_dps
+                SELECT dps, legend_count FROM player_daily_dps
                 WHERE discord_id = $1 AND region = $2 AND mode = $3
                   AND season_id = $4 AND date_utc = $5
                 """,
                 discord_id, region, "standard", std_season, today,
+            )
+            std_best_row = await conn.fetchrow(
+                """
+                SELECT best_rank, legend_count FROM player_daily_dps
+                WHERE discord_id = $1 AND region = $2 AND mode = $3 AND season_id = $4
+                ORDER BY best_rank ASC, updated_at DESC
+                LIMIT 1
+                """,
+                discord_id, region, "standard", std_season,
+            )
+            std_latest_legend_count = await conn.fetchval(
+                """
+                SELECT legend_count FROM player_daily_dps
+                WHERE discord_id = $1 AND region = $2 AND mode = $3 AND season_id = $4
+                ORDER BY date_utc DESC, updated_at DESC
+                LIMIT 1
+                """,
+                discord_id, region, "standard", std_season,
             )
             wild_season_row = await conn.fetchrow(
                 """
@@ -314,42 +325,62 @@ class RankCommands(commands.Cog):
                 """,
                 discord_id, region, "wild", wild_season,
             )
-            wild_best = await conn.fetchval(
+            wild_today_row = await conn.fetchrow(
                 """
-                SELECT MIN(best_rank) FROM player_daily_best
-                WHERE discord_id = $1 AND region = $2 AND mode = $3 AND season_id = $4
-                """,
-                discord_id, region, "wild", wild_season,
-            )
-            wild_today_dps = await conn.fetchval(
-                """
-                SELECT dps FROM player_daily_dps
+                SELECT dps, legend_count FROM player_daily_dps
                 WHERE discord_id = $1 AND region = $2 AND mode = $3
                   AND season_id = $4 AND date_utc = $5
                 """,
                 discord_id, region, "wild", wild_season, today,
             )
+            wild_best_row = await conn.fetchrow(
+                """
+                SELECT best_rank, legend_count FROM player_daily_dps
+                WHERE discord_id = $1 AND region = $2 AND mode = $3 AND season_id = $4
+                ORDER BY best_rank ASC, updated_at DESC
+                LIMIT 1
+                """,
+                discord_id, region, "wild", wild_season,
+            )
+            wild_latest_legend_count = await conn.fetchval(
+                """
+                SELECT legend_count FROM player_daily_dps
+                WHERE discord_id = $1 AND region = $2 AND mode = $3 AND season_id = $4
+                ORDER BY date_utc DESC, updated_at DESC
+                LIMIT 1
+                """,
+                discord_id, region, "wild", wild_season,
+            )
 
-        def _current(e):
-            return f"#{e.rank}" if e else "-"
+        def _rank_with_count(rank, legend_count):
+            if rank is None:
+                return "-"
+            if legend_count:
+                return f"#{rank}/{legend_count}"
+            return f"#{rank}"
 
-        def _best(v):
-            return f"#{v}" if v is not None else "-"
+        def _current(e, legend_count):
+            return _rank_with_count(e.rank, legend_count) if e else "-"
+
+        def _best(row):
+            if row is None:
+                return "-"
+            return _rank_with_count(row["best_rank"], row["legend_count"])
 
         def _score(r):
             return f"{r['season_score']:.2f}" if r else "-"
 
-        def _dps(v):
-            return f"{v:.2f}" if v is not None else "-"
+        def _dps(row):
+            return f"{row['dps']:.2f}" if row else "-"
 
-        std_current   = _current(std_entry)
-        wild_current  = _current(wild_entry)
-        std_best_str  = _best(std_best)
-        wild_best_str = _best(wild_best)
+        std_current   = _current(std_entry, std_latest_legend_count)
+        wild_current  = _current(wild_entry, wild_latest_legend_count)
+        std_best_str  = _best(std_best_row)
+        wild_best_str = _best(wild_best_row)
         std_score     = _score(std_season_row)
         wild_score    = _score(wild_season_row)
-        std_dps       = _dps(std_today_dps)
-        wild_dps      = _dps(wild_today_dps)
+        std_dps       = _dps(std_today_row)
+        wild_dps      = _dps(wild_today_row)
 
         label_dps = "Today's Score"
         w = max(len(label_dps), len(std_current), len(wild_current),

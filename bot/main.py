@@ -33,6 +33,7 @@ class HsSnakeBot(commands.Bot):
     def __init__(self) -> None:
         intents = discord.Intents.default()
         intents.message_content = True  # privileged intent — must also be enabled in the Discord Developer Portal
+        intents.members = True  # privileged intent — enable "Server Members Intent" in the Discord Developer Portal
         super().__init__(command_prefix=settings.command_prefix, intents=intents)
 
     async def setup_hook(self) -> None:
@@ -43,6 +44,7 @@ class HsSnakeBot(commands.Bot):
         await self.load_extension("bot.commands.auto_detect")
         await self.load_extension("bot.commands.search_commands")
         await self.load_extension("bot.commands.rank_commands")
+        await self.load_extension("bot.commands.guild_lb_commands")
 
         # Sync slash commands (guild-scoped during dev, global in prod)
         if settings.discord_guild_id:
@@ -62,10 +64,7 @@ class HsSnakeBot(commands.Bot):
                 name=f"Hearthstone Assistant v{__version__} - by DeeSnow",
             )
         )
-        try:
-            await self.user.edit(bio=f"Hearthstone Assistant bot — decks, cards, rankings and more.\nCheck out the project on GitHub: https://github.com/deesnow/HS-Snake")
-        except discord.HTTPException as e:
-            log.warning("Could not set bot bio: %s", e)
+
 
 
 async def main() -> None:
