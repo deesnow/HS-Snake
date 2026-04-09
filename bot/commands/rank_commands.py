@@ -249,20 +249,15 @@ class RankCommands(commands.Cog):
         header = f"🏆 **{battletag}** — {region}  ·  Season {season_id}"
         if entry is None:
             rank_str = "_Not found in top ranks this season._"
-            return (
-                f"{header}\n"
-                f"{mode_label}  ->  {rank_str}\n"
-                f"Season Score: {season_score}"
-            )
         else:
             rank_str = f"**#{entry.rank}**"
             if entry.rating:
                 rank_str += f"  (MMR {entry.rating})"
-            return (
-                f"{header}\n"
-                f"{mode_label}  ->  {rank_str}\n"
-                f"Season Score: {season_score}   Current Rank: #{entry.rank}"
-            )
+        return (
+            f"{header}\n"
+            f"{mode_label}  ->  {rank_str}\n"
+            f"Season Score: {season_score}"
+        )
 
     async def _section_default(self, battletag, region, discord_id):
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
