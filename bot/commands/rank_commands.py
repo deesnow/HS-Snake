@@ -234,49 +234,35 @@ class RankCommands(commands.Cog):
         return await self._section_default(battletag, region, discord_id)
 
     async def _section_single(self, battletag, region, mode, mode_label, discord_id):
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         entry, season_id = await self._fetch_entry(battletag, region, mode, discord_id)
         async with get_db() as conn:
             season_row = await conn.fetchrow(
                 """
-                SELECT season_score, days_counted FROM player_season_score
+                SELECT season_score FROM player_season_score
                 WHERE discord_id = $1 AND region = $2 AND mode = $3 AND season_id = $4
                 """,
                 discord_id, region, mode, season_id,
-            )
-            best_rank = await conn.fetchval(
-                """
-                SELECT MIN(best_rank) FROM player_daily_best
-                WHERE discord_id = $1 AND region = $2 AND mode = $3 AND season_id = $4
-                """,
-                discord_id, region, mode, season_id,
-            )
-            today_dps = await conn.fetchval(
-                """
-                SELECT dps FROM player_daily_dps
-                WHERE discord_id = $1 AND region = $2 AND mode = $3
-                  AND season_id = $4 AND date_utc = $5
-                """,
-                discord_id, region, mode, season_id, today,
             )
 
         season_score = f"{season_row['season_score']:.2f}" if season_row else "-"
-        days_counted = f"{season_row['days_counted']}" if season_row else "-"
-        best_rank_str = f"{best_rank}" if best_rank is not None else "-"
-        today_dps_str = f"{today_dps:.2f}" if today_dps is not None else "-"
 
         header = f"🏆 **{battletag}** — {region}  ·  Season {season_id}"
         if entry is None:
             rank_str = "_Not found in top ranks this season._"
+            return (
+                f"{header}\n"
+                f"{mode_label}  ->  {rank_str}\n"
+                f"Season Score: {season_score}"
+            )
         else:
             rank_str = f"**#{entry.rank}**"
             if entry.rating:
                 rank_str += f"  (MMR {entry.rating})"
-        return (
-            f"{header}\n"
-            f"{mode_label}  ->  {rank_str}\n"
-            f"Season Score: {season_score}   Days Counted: {days_counted}   Best Rank: {best_rank_str}   Today's Score: {today_dps_str}"
-        )
+            return (
+                f"{header}\n"
+                f"{mode_label}  ->  {rank_str}\n"
+                f"Season Score: {season_score}   Current Rank: #{entry.rank}"
+            )
 
     async def _section_default(self, battletag, region, discord_id):
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
