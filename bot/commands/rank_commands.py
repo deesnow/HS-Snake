@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from bot.services import leaderboard_cache
 from bot.services.db import get_db
 from bot.services.leaderboard_client import LeaderboardEntry
+from bot.services.season_id import resolve_current_season_id
 
 log = logging.getLogger(__name__)
 
@@ -383,11 +384,8 @@ class RankCommands(commands.Cog):
     async def _fetch_entry(battletag, region, mode, discord_id):
         needle = battletag.lower().split("#")[0]
         async with get_db() as conn:
-            # Current season is always derived from the live leaderboard, never from player data.
-            season_id = await conn.fetchval(
-                "SELECT MAX(season_id) FROM ldb_current_entries WHERE region = $1 AND mode = $2",
-                region.upper(), mode.lower(),
-            )
+            # Current season is derived from the live leaderboard with month-rollover inference.
+            season_id = await resolve_current_season_id(conn, region, mode)
             if season_id is None:
                 raise RuntimeError(
                     f"Leaderboard data for {region}/{mode} is not available yet. "
