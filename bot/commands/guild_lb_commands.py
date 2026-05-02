@@ -147,7 +147,7 @@ class GuildLbCommands(commands.Cog):
 
         col_bt    = max(len(r["battletag"]) for r in guild_rows)
         col_bt    = max(col_bt, len("BattleTag"))
-        col_score = max(len(f"{r['season_score']:.2f}") for r in guild_rows)
+        col_score = max(len(f"{r['season_score']:.0f}") for r in guild_rows)
         col_score = max(col_score, len("Score"))
         col_days  = max(len(str(r["days_counted"])) for r in guild_rows)
         col_days  = max(col_days, len("Days"))
@@ -157,7 +157,7 @@ class GuildLbCommands(commands.Cog):
 
         lines = [hdr, sep]
         for i, row in enumerate(guild_rows, start=1):
-            score = f"{row['season_score']:.2f}"
+            score = f"{row['season_score']:.0f}"
             lines.append(
                 f"{f'{i}.':<4}  {row['battletag']:<{col_bt}}  {score:>{col_score}}  {row['days_counted']:>{col_days}}"
             )
