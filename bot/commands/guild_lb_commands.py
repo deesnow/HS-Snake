@@ -4,6 +4,7 @@ Guild leaderboard slash command: /glb
 Shows a ranked list of season scores filtered to members of the calling Discord server.
 """
 import logging
+from datetime import datetime, timezone
 from typing import Optional
 
 import discord
@@ -126,10 +127,47 @@ class GuildLbCommands(commands.Cog):
                 region.value, mode.value, season_id,
             )
 
+            # ── Resolve rank snapshot source for output ─────────────────────
+            rank_date = None
+            if season_value == "current":
+                rank_date = datetime.now(timezone.utc).date()
+            else:
+                rank_date = await conn.fetchval(
+                    """
+                    SELECT MAX((observed_at AT TIME ZONE 'UTC')::date)
+                    FROM player_rank_log
+                    WHERE region = $1 AND mode = $2 AND season_id = $3
+                    """,
+                    region.value,
+                    mode.value,
+                    season_id,
+                )
+
+            rank_by_discord: dict[str, int] = {}
+            if rank_date is not None:
+                rank_rows = await conn.fetch(
+                    """
+                    SELECT DISTINCT ON (discord_id) discord_id, rank
+                    FROM player_rank_log
+                    WHERE region = $1
+                      AND mode = $2
+                      AND season_id = $3
+                      AND (observed_at AT TIME ZONE 'UTC')::date = $4::date
+                    ORDER BY discord_id, observed_at DESC
+                    """,
+                    region.value,
+                    mode.value,
+                    season_id,
+                    rank_date,
+                )
+                rank_by_discord = {
+                    str(r["discord_id"]): int(r["rank"])
+                    for r in rank_rows
+                }
+
             # ── For previous season, determine the actual days in that month ───
             days_in_month = None
             if season_value == "previous":
-                from datetime import datetime
                 max_date_str = await conn.fetchval(
                     """
                     SELECT MAX(date_utc) FROM player_daily_dps
@@ -144,7 +182,6 @@ class GuildLbCommands(commands.Cog):
                         next_month_start = datetime(year + 1, 1, 1)
                     else:
                         next_month_start = datetime(year, month + 1, 1)
-                    from datetime import timedelta
                     days_in_month = (next_month_start - datetime(year, month, 1)).days
 
         # ── Filter to guild members ───────────────────────────────────────────
@@ -166,32 +203,35 @@ class GuildLbCommands(commands.Cog):
 
         # ── Format output ─────────────────────────────────────────────────────
         season_label = "Current" if season_value == "current" else "Previous"
+        if days_in_month is not None:
+            days_value = days_in_month
+        else:
+            days_value = max((int(r["days_counted"]) for r in guild_rows), default=0)
         header = (
             f"🏆 Guild Leaderboard — {region.value} · {mode.name} · "
             f"Season {season_id} ({season_label})\n"
+            f"Days: {days_value}\n"
         )
 
         col_bt    = max(len(r["battletag"]) for r in guild_rows)
         col_bt    = max(col_bt, len("BattleTag"))
+        col_rank  = max(
+            len(str(rank_by_discord.get(str(r["discord_id"]), "-")))
+            for r in guild_rows
+        )
+        col_rank  = max(col_rank, len("Rank"))
         col_score = max(len(f"{r['season_score']:.0f}") for r in guild_rows)
         col_score = max(col_score, len("Score"))
-        
-        # Use calculated days_in_month for previous season, otherwise use stored days_counted
-        if days_in_month is not None:
-            col_days = max(len(str(days_in_month)), len("Days"))
-        else:
-            col_days = max(len(str(r["days_counted"])) for r in guild_rows)
-            col_days = max(col_days, len("Days"))
 
-        sep   = f"{'---':<4}  {'-' * col_bt}  {'-' * col_score}  {'-' * col_days}"
-        hdr   = f"{'#':<4}  {'BattleTag':<{col_bt}}  {'Score':>{col_score}}  {'Days':>{col_days}}"
+        sep   = f"{'---':<4}  {'-' * col_bt}  {'-' * col_rank}  {'-' * col_score}"
+        hdr   = f"{'#':<4}  {'BattleTag':<{col_bt}}  {'Rank':>{col_rank}}  {'Score':>{col_score}}"
 
         lines = [hdr, sep]
         for i, row in enumerate(guild_rows, start=1):
             score = f"{row['season_score']:.0f}"
-            display_days = days_in_month if days_in_month is not None else row["days_counted"]
+            rank_value = rank_by_discord.get(str(row["discord_id"]), "-")
             lines.append(
-                f"{f'{i}.':<4}  {row['battletag']:<{col_bt}}  {score:>{col_score}}  {display_days:>{col_days}}"
+                f"{f'{i}.':<4}  {row['battletag']:<{col_bt}}  {rank_value:>{col_rank}}  {score:>{col_score}}"
             )
 
         table = "```\n" + "\n".join(lines) + "\n```"
