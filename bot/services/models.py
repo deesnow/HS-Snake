@@ -22,6 +22,7 @@ class CardInfo:
     flavor: Optional[str] = None
     race: Optional[str] = None          # NAGA, PIRATE, DRAGON, … (minions)
     spell_school: Optional[str] = None  # SHADOW, NATURE, FIRE, … (spells)
+    how_to_earn: Optional[str] = None   # present when card was awarded for free (event, reward track, etc.)
 
 
 @dataclass

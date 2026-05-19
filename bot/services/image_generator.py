@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 
 from PIL import Image, ImageDraw, ImageFont
 
-from bot.services.models import CardEntry, DeckInfo
+from bot.services.models import CardEntry, CardInfo, DeckInfo
 
 if TYPE_CHECKING:
     from bot.services.hs_json_client import HSJsonClient
@@ -154,10 +154,12 @@ def _label_geometry(card_w: int, card_h: int) -> tuple[tuple[int, int], int, int
     return (lbl_w, lbl_h), lbl_dx, lbl_dy
 
 
-def _dust_cost(rarity: str, count: int) -> int:
+def _dust_cost(card: CardInfo, count: int) -> int:
+    if card.card_set.upper() == "CORE" or card.how_to_earn is not None:
+        return 0
     costs = {"FREE": 0, "COMMON": 40, "RARE": 100, "EPIC": 400, "LEGENDARY": 1600}
-    per_copy = costs.get(rarity.upper(), 0)
-    return per_copy if rarity.upper() == "LEGENDARY" else per_copy * count
+    per_copy = costs.get(card.rarity.upper(), 0)
+    return per_copy if card.rarity.upper() == "LEGENDARY" else per_copy * count
 
 
 def _load_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
@@ -342,7 +344,7 @@ class ImageGenerator:
                 )
 
         # ── Dust cost + branding footer ──────────────────────────────────────
-        total_dust = sum(_dust_cost(e.card.rarity, e.count) for e in entries)
+        total_dust = sum(_dust_cost(e.card, e.count) for e in entries)
         draw  = ImageDraw.Draw(canvas)
 
         # Erase the baked-in 'Deck Viewer' + github text from the background
