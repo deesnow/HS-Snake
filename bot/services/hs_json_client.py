@@ -67,6 +67,7 @@ def _build_card_info(raw: dict) -> Optional[CardInfo]:
         flavor=raw.get("flavor"),
         race=raw.get("race"),
         spell_school=raw.get("spellSchool"),
+        how_to_earn=raw.get("howToEarn"),
     )
 
 
