@@ -155,8 +155,14 @@ def _label_geometry(card_w: int, card_h: int) -> tuple[tuple[int, int], int, int
 
 
 def _dust_cost(card: CardInfo, count: int) -> int:
-    if card.card_set.upper() == "CORE" or card.how_to_earn is not None:
+    if card.card_set.upper() == "CORE":
         return 0
+    if card.how_to_earn is not None:
+        hte = card.how_to_earn
+        if hte.startswith("Earnable"):
+            return 0
+        if hte.startswith("Unlocked") and "Karazhan" not in hte and "adventure" not in hte.lower():
+            return 0
     costs = {"FREE": 0, "COMMON": 40, "RARE": 100, "EPIC": 400, "LEGENDARY": 1600}
     per_copy = costs.get(card.rarity.upper(), 0)
     return per_copy if card.rarity.upper() == "LEGENDARY" else per_copy * count
