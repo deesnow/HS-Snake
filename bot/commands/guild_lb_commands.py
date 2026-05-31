@@ -117,10 +117,14 @@ class GuildLbCommands(commands.Cog):
             # ── Fetch scores ─────────────────────────────────────────────────
             rows = await conn.fetch(
                 """
-                SELECT pss.discord_id, ub.battletag, pss.season_score, pss.days_counted
+                SELECT ub.discord_id,
+                       ub.battletag          AS battletag,
+                       pss.battletag         AS battletag_key,
+                       pss.season_score,
+                       pss.days_counted
                 FROM player_season_score pss
                 JOIN user_battletags ub
-                  ON ub.discord_id = pss.discord_id AND ub.region = pss.region
+                  ON LOWER(ub.battletag) = pss.battletag AND ub.region = pss.region
                 WHERE pss.region = $1 AND pss.mode = $2 AND pss.season_id = $3
                 ORDER BY pss.season_score DESC
                 """,
@@ -143,25 +147,25 @@ class GuildLbCommands(commands.Cog):
                     season_id,
                 )
 
-            rank_by_discord: dict[str, int] = {}
+            rank_by_battletag: dict[str, int] = {}
             if rank_date is not None:
                 rank_rows = await conn.fetch(
                     """
-                    SELECT DISTINCT ON (discord_id) discord_id, rank
+                    SELECT DISTINCT ON (battletag) battletag, rank
                     FROM player_rank_log
                     WHERE region = $1
                       AND mode = $2
                       AND season_id = $3
                       AND (observed_at AT TIME ZONE 'UTC')::date = $4::date
-                    ORDER BY discord_id, observed_at DESC
+                    ORDER BY battletag, observed_at DESC
                     """,
                     region.value,
                     mode.value,
                     season_id,
                     rank_date,
                 )
-                rank_by_discord = {
-                    str(r["discord_id"]): int(r["rank"])
+                rank_by_battletag = {
+                    r["battletag"]: int(r["rank"])
                     for r in rank_rows
                 }
 
@@ -216,7 +220,7 @@ class GuildLbCommands(commands.Cog):
         col_bt    = max(len(r["battletag"]) for r in guild_rows)
         col_bt    = max(col_bt, len("BattleTag"))
         col_rank  = max(
-            len(str(rank_by_discord.get(str(r["discord_id"]), "-")))
+            len(str(rank_by_battletag.get(r["battletag_key"], "-")))
             for r in guild_rows
         )
         col_rank  = max(col_rank, len("Rank"))
@@ -229,7 +233,7 @@ class GuildLbCommands(commands.Cog):
         lines = [hdr, sep]
         for i, row in enumerate(guild_rows, start=1):
             score = f"{row['season_score']:.0f}"
-            rank_value = rank_by_discord.get(str(row["discord_id"]), "-")
+            rank_value = rank_by_battletag.get(row["battletag_key"], "-")
             lines.append(
                 f"{f'{i}.':<4}  {row['battletag']:<{col_bt}}  {rank_value:>{col_rank}}  {score:>{col_score}}"
             )

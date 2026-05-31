@@ -100,11 +100,11 @@ async def refresh_pages(
 
     async with get_db() as conn:
         # Load all registered battletags for this region once per refresh run.
-        # Map: battletag_lower (name only, no #NNNN) → discord_id
+        # Map: battletag_lower (name only, no #NNNN) → battletag_lower (full, e.g. "player#1234")
         registered: dict[str, str] = {
-            row["battletag"].lower().split("#")[0]: row["discord_id"]
+            row["battletag"].lower().split("#")[0]: row["battletag"].lower()
             for row in await conn.fetch(
-                "SELECT discord_id, battletag FROM user_battletags WHERE region = $1",
+                "SELECT battletag FROM user_battletags WHERE region = $1",
                 region.upper(),
             )
         }
@@ -160,8 +160,8 @@ async def refresh_pages(
             if not registered:
                 return
             for entry in page_entries:
-                discord_id = registered.get(entry.battletag)
-                if discord_id is None:
+                battletag = registered.get(entry.battletag)
+                if battletag is None:
                     continue
                 log.debug(
                     "Tracked registered player %s at rank #%d (%s/%s)",
@@ -170,18 +170,18 @@ async def refresh_pages(
                 await conn.execute(
                     """
                     INSERT INTO player_rank_log
-                        (discord_id, region, mode, season_id, rank, rating, observed_at)
+                        (battletag, region, mode, season_id, rank, rating, observed_at)
                     VALUES ($1, $2, $3, $4, $5, $6, $7)
                     """,
-                    discord_id, region.upper(), mode.lower(),
+                    battletag, region.upper(), mode.lower(),
                     current_season_id, entry.rank, entry.rating, now,
                 )
                 await conn.execute(
                     """
                     INSERT INTO player_daily_best
-                        (discord_id, region, mode, season_id, date_utc, best_rank, updated_at)
+                        (battletag, region, mode, season_id, date_utc, best_rank, updated_at)
                     VALUES ($1, $2, $3, $4, $5, $6, $7)
-                    ON CONFLICT (discord_id, region, mode, season_id, date_utc) DO UPDATE SET
+                    ON CONFLICT (battletag, region, mode, season_id, date_utc) DO UPDATE SET
                         best_rank  = LEAST(player_daily_best.best_rank, EXCLUDED.best_rank),
                         updated_at = CASE
                             WHEN EXCLUDED.best_rank < player_daily_best.best_rank
@@ -189,7 +189,7 @@ async def refresh_pages(
                             ELSE player_daily_best.updated_at
                         END
                     """,
-                    discord_id, region.upper(), mode.lower(),
+                    battletag, region.upper(), mode.lower(),
                     current_season_id, date_utc, entry.rank, now,
                 )
 
@@ -206,9 +206,9 @@ async def refresh_pages(
                 await conn.execute(
                     """
                     INSERT INTO player_daily_dps
-                        (discord_id, region, mode, season_id, date_utc, dps, best_rank, legend_count, updated_at)
+                        (battletag, region, mode, season_id, date_utc, dps, best_rank, legend_count, updated_at)
                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-                    ON CONFLICT (discord_id, region, mode, season_id, date_utc) DO UPDATE SET
+                    ON CONFLICT (battletag, region, mode, season_id, date_utc) DO UPDATE SET
                         best_rank    = LEAST(player_daily_dps.best_rank, EXCLUDED.best_rank),
                         dps          = CASE
                             WHEN EXCLUDED.best_rank < player_daily_dps.best_rank
@@ -226,12 +226,12 @@ async def refresh_pages(
                             ELSE player_daily_dps.updated_at
                         END
                     """,
-                    discord_id, region.upper(), mode.lower(),
+                    battletag, region.upper(), mode.lower(),
                     current_season_id, date_utc, dps, best_rank, legend_count, now,
                 )
 
                 await recalculate_season_score(
-                    discord_id, region.upper(), mode.lower(), current_season_id
+                    battletag, region.upper(), mode.lower(), current_season_id
                 )
 
         async def on_page_error(page: int) -> None:

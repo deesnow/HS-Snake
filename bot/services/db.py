@@ -96,7 +96,7 @@ async def _migrate(conn: asyncpg.Connection) -> None:
         -- Raw rank observations for every registered player found during a refresh.
         CREATE TABLE IF NOT EXISTS player_rank_log (
             id          SERIAL PRIMARY KEY,
-            discord_id  TEXT    NOT NULL,
+            battletag   TEXT    NOT NULL,
             region      TEXT    NOT NULL,
             mode        TEXT    NOT NULL,
             season_id   INTEGER NOT NULL,
@@ -105,24 +105,21 @@ async def _migrate(conn: asyncpg.Connection) -> None:
             observed_at TEXT    NOT NULL
         );
 
-        CREATE INDEX IF NOT EXISTS idx_prl
-            ON player_rank_log (discord_id, region, mode, season_id, observed_at DESC);
-
         -- Daily best rank per registered player (upserted whenever a better rank is observed).
         CREATE TABLE IF NOT EXISTS player_daily_best (
-            discord_id  TEXT    NOT NULL,
+            battletag   TEXT    NOT NULL,
             region      TEXT    NOT NULL,
             mode        TEXT    NOT NULL,
             season_id   INTEGER NOT NULL,
             date_utc    TEXT    NOT NULL,
             best_rank   INTEGER NOT NULL,
             updated_at  TEXT    NOT NULL,
-            PRIMARY KEY (discord_id, region, mode, season_id, date_utc)
+            PRIMARY KEY (battletag, region, mode, season_id, date_utc)
         );
 
         -- Daily DPS per player per day (new for DPS/Season Score feature)
         CREATE TABLE IF NOT EXISTS player_daily_dps (
-            discord_id   TEXT    NOT NULL,
+            battletag    TEXT    NOT NULL,
             region       TEXT    NOT NULL,
             mode         TEXT    NOT NULL,
             season_id    INTEGER NOT NULL,
@@ -131,19 +128,19 @@ async def _migrate(conn: asyncpg.Connection) -> None:
             best_rank    INTEGER NOT NULL,
             legend_count INTEGER NOT NULL,
             updated_at   TEXT    NOT NULL,
-            PRIMARY KEY (discord_id, region, mode, season_id, date_utc)
+            PRIMARY KEY (battletag, region, mode, season_id, date_utc)
         );
 
         -- Season score per player per season (new for DPS/Season Score feature)
         CREATE TABLE IF NOT EXISTS player_season_score (
-            discord_id   TEXT    NOT NULL,
+            battletag    TEXT    NOT NULL,
             region       TEXT    NOT NULL,
             mode         TEXT    NOT NULL,
             season_id    INTEGER NOT NULL,
             season_score REAL    NOT NULL,
             days_counted INTEGER NOT NULL,
             updated_at   TEXT    NOT NULL,
-            PRIMARY KEY (discord_id, region, mode, season_id)
+            PRIMARY KEY (battletag, region, mode, season_id)
         );
     """)
 
@@ -220,3 +217,68 @@ async def _migrate(conn: asyncpg.Connection) -> None:
         # Drop the old tables now that data is migrated.
         await conn.execute("DROP TABLE IF EXISTS ldb_entries")
         await conn.execute("DROP TABLE IF EXISTS ldb_snapshots")
+
+    # ── Migrate discord_id → battletag in player tracking tables ─────────────
+    await conn.execute("""
+        DO $$ BEGIN
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'player_season_score' AND column_name = 'discord_id'
+            ) THEN
+                -- player_daily_best
+                ALTER TABLE player_daily_best ADD COLUMN battletag TEXT;
+                UPDATE player_daily_best pdb
+                    SET battletag = LOWER(ub.battletag)
+                    FROM user_battletags ub
+                    WHERE ub.discord_id = pdb.discord_id AND ub.region = pdb.region;
+                DELETE FROM player_daily_best WHERE battletag IS NULL;
+                ALTER TABLE player_daily_best DROP CONSTRAINT player_daily_best_pkey;
+                ALTER TABLE player_daily_best DROP COLUMN discord_id;
+                ALTER TABLE player_daily_best
+                    ADD PRIMARY KEY (battletag, region, mode, season_id, date_utc);
+
+                -- player_daily_dps
+                ALTER TABLE player_daily_dps ADD COLUMN battletag TEXT;
+                UPDATE player_daily_dps pdd
+                    SET battletag = LOWER(ub.battletag)
+                    FROM user_battletags ub
+                    WHERE ub.discord_id = pdd.discord_id AND ub.region = pdd.region;
+                DELETE FROM player_daily_dps WHERE battletag IS NULL;
+                ALTER TABLE player_daily_dps DROP CONSTRAINT player_daily_dps_pkey;
+                ALTER TABLE player_daily_dps DROP COLUMN discord_id;
+                ALTER TABLE player_daily_dps
+                    ADD PRIMARY KEY (battletag, region, mode, season_id, date_utc);
+
+                -- player_rank_log
+                ALTER TABLE player_rank_log ADD COLUMN battletag TEXT;
+                UPDATE player_rank_log prl
+                    SET battletag = LOWER(ub.battletag)
+                    FROM user_battletags ub
+                    WHERE ub.discord_id = prl.discord_id AND ub.region = prl.region;
+                DELETE FROM player_rank_log WHERE battletag IS NULL;
+                DROP INDEX IF EXISTS idx_prl;
+                ALTER TABLE player_rank_log DROP COLUMN discord_id;
+                CREATE INDEX idx_prl
+                    ON player_rank_log (battletag, region, mode, season_id, observed_at DESC);
+
+                -- player_season_score
+                ALTER TABLE player_season_score ADD COLUMN battletag TEXT;
+                UPDATE player_season_score pss
+                    SET battletag = LOWER(ub.battletag)
+                    FROM user_battletags ub
+                    WHERE ub.discord_id = pss.discord_id AND ub.region = pss.region;
+                DELETE FROM player_season_score WHERE battletag IS NULL;
+                ALTER TABLE player_season_score DROP CONSTRAINT player_season_score_pkey;
+                ALTER TABLE player_season_score DROP COLUMN discord_id;
+                ALTER TABLE player_season_score
+                    ADD PRIMARY KEY (battletag, region, mode, season_id);
+            END IF;
+        END $$;
+    """)
+
+    # Create idx_prl here (not in the CREATE TABLE block) so it always runs after
+    # the battletag column exists — either via migration above or on a fresh DB.
+    await conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_prl
+            ON player_rank_log (battletag, region, mode, season_id, observed_at DESC);
+    """)

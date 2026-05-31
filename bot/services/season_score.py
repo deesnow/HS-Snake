@@ -9,7 +9,7 @@ from bot.services.db import get_db
 log = logging.getLogger(__name__)
 
 
-async def recalculate_season_score(discord_id: str, region: str, mode: str, season_id: int) -> None:
+async def recalculate_season_score(battletag: str, region: str, mode: str, season_id: int) -> None:
     """
     Recalculate and upsert the season score for a player for the given season.
     Season Score = average of all daily DPS values for the player in the season.
@@ -18,9 +18,9 @@ async def recalculate_season_score(discord_id: str, region: str, mode: str, seas
         max_date = await conn.fetchval(
             """
             SELECT MAX(date_utc) FROM player_daily_dps
-            WHERE discord_id = $1 AND region = $2 AND mode = $3 AND season_id = $4
+            WHERE battletag = $1 AND region = $2 AND mode = $3 AND season_id = $4
             """,
-            discord_id, region, mode, season_id,
+            battletag, region, mode, season_id,
         )
 
         if not max_date:
@@ -42,9 +42,9 @@ async def recalculate_season_score(discord_id: str, region: str, mode: str, seas
             rows = await conn.fetch(
                 """
                 SELECT date_utc, dps FROM player_daily_dps
-                WHERE discord_id = $1 AND region = $2 AND mode = $3 AND season_id = $4
+                WHERE battletag = $1 AND region = $2 AND mode = $3 AND season_id = $4
                 """,
-                discord_id, region, mode, season_id,
+                battletag, region, mode, season_id,
             )
             dps_by_day = {r["date_utc"]: r["dps"] for r in rows}
             total_dps = sum(dps_by_day.get(day, 0.0) for day in all_days)
@@ -54,19 +54,19 @@ async def recalculate_season_score(discord_id: str, region: str, mode: str, seas
         await conn.execute(
             """
             INSERT INTO player_season_score
-                (discord_id, region, mode, season_id, season_score, days_counted, updated_at)
+                (battletag, region, mode, season_id, season_score, days_counted, updated_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7)
-            ON CONFLICT (discord_id, region, mode, season_id) DO UPDATE SET
+            ON CONFLICT (battletag, region, mode, season_id) DO UPDATE SET
                 season_score = EXCLUDED.season_score,
                 days_counted = EXCLUDED.days_counted,
                 updated_at   = EXCLUDED.updated_at
             """,
-            discord_id, region, mode, season_id, season_score, days_counted, now,
+            battletag, region, mode, season_id, season_score, days_counted, now,
         )
 
     log.info(
         "Updated season score for %s %s/%s season %s: %.2f (%d days)",
-        discord_id, region, mode, season_id, season_score, days_counted,
+        battletag, region, mode, season_id, season_score, days_counted,
     )
 
 
@@ -76,14 +76,14 @@ async def recalculate_all_season_scores(region: str, mode: str, season_id: int) 
     """
     async with get_db() as conn:
         players = [
-            r["discord_id"] for r in await conn.fetch(
+            r["battletag"] for r in await conn.fetch(
                 """
-                SELECT DISTINCT discord_id FROM player_daily_dps
+                SELECT DISTINCT battletag FROM player_daily_dps
                 WHERE region = $1 AND mode = $2 AND season_id = $3
                 """,
                 region, mode, season_id,
             )
         ]
 
-    for discord_id in players:
-        await recalculate_season_score(discord_id, region, mode, season_id)
+    for battletag in players:
+        await recalculate_season_score(battletag, region, mode, season_id)
