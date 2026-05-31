@@ -2,7 +2,7 @@
 Legend rank slash commands: /rank, /rankset, /rankremove.
 
 Multi-region support: one BattleTag per (discord_id, region).
-/rankset    -- register/update a BattleTag for a specific region
+/rankset    -- register/update a BattleTag for all regions at once
 /rankremove -- remove registration for a region
 /rank       -- show ranks across all registered regions (or filter by region/mode)
 """
@@ -110,18 +110,15 @@ class RankCommands(commands.Cog):
 
     @app_commands.command(
         name="rankset",
-        description="Register your BattleTag for a region. Run once per region you play in.",
+        description="Register your BattleTag for all regions (EU, US, AP) at once.",
     )
     @app_commands.describe(
-        battletag="Your BattleTag for this region, e.g. Player#1234",
-        region="Region: EU, US or AP",
+        battletag="Your BattleTag, e.g. Player#1234",
     )
-    @app_commands.choices(region=_REGION_CHOICES)
     async def rankset(
         self,
         interaction: discord.Interaction,
         battletag: str,
-        region: app_commands.Choice[str],
     ) -> None:
         bt = battletag.strip()
         if not _BATTLETAG_RE.match(bt):
@@ -131,18 +128,19 @@ class RankCommands(commands.Cog):
             )
             return
         async with get_db() as conn:
-            await conn.execute(
-                """
-                INSERT INTO user_battletags (discord_id, region, battletag)
-                VALUES ($1, $2, $3)
-                ON CONFLICT (discord_id, region) DO UPDATE SET battletag = EXCLUDED.battletag
-                """,
-                str(interaction.user.id), region.value, bt,
-            )
-        log.info("/rankset user=%s battletag=%r region=%s", interaction.user, bt, region.value)
+            for region in ("EU", "US", "AP"):
+                await conn.execute(
+                    """
+                    INSERT INTO user_battletags (discord_id, region, battletag)
+                    VALUES ($1, $2, $3)
+                    ON CONFLICT (discord_id, region) DO UPDATE SET battletag = EXCLUDED.battletag
+                    """,
+                    str(interaction.user.id), region, bt,
+                )
+        log.info("/rankset user=%s battletag=%r all regions", interaction.user, bt)
         await interaction.response.send_message(
-            f"✅ Registered **{bt}** for **{region.value}**. "
-            "Use `/rank` to check your rank, or `/rankset` again for another region.",
+            f"✅ Registered **{bt}** for **EU, US and AP**. "
+            "Use `/rank` to check your rank.",
             ephemeral=True,
         )
 
@@ -211,9 +209,8 @@ class RankCommands(commands.Cog):
             )
             return
         try:
-            discord_id = str(interaction.user.id)
             sections = await asyncio.gather(*[
-                self._build_section(row["battletag"], row["region"], mode, discord_id)
+                self._build_section(row["battletag"], row["region"], mode)
                 for row in rows
             ])
             log.debug("/rank: user=%s sections=%r", interaction.user.id, sections)
@@ -229,20 +226,20 @@ class RankCommands(commands.Cog):
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
-    async def _build_section(self, battletag, region, mode, discord_id):
+    async def _build_section(self, battletag, region, mode):
         if mode is not None:
-            return await self._section_single(battletag, region, mode.value, mode.name, discord_id)
-        return await self._section_default(battletag, region, discord_id)
+            return await self._section_single(battletag, region, mode.value, mode.name)
+        return await self._section_default(battletag, region)
 
-    async def _section_single(self, battletag, region, mode, mode_label, discord_id):
-        entry, season_id = await self._fetch_entry(battletag, region, mode, discord_id)
+    async def _section_single(self, battletag, region, mode, mode_label):
+        entry, season_id = await self._fetch_entry(battletag, region, mode)
         async with get_db() as conn:
             season_row = await conn.fetchrow(
                 """
                 SELECT season_score FROM player_season_score
-                WHERE discord_id = $1 AND region = $2 AND mode = $3 AND season_id = $4
+                WHERE battletag = $1 AND region = $2 AND mode = $3 AND season_id = $4
                 """,
-                discord_id, region, mode, season_id,
+                battletag.lower(), region, mode, season_id,
             )
 
         season_score = f"{season_row['season_score']:.2f}" if season_row else "-"
@@ -260,78 +257,79 @@ class RankCommands(commands.Cog):
             f"Season Score: {season_score}"
         )
 
-    async def _section_default(self, battletag, region, discord_id):
+    async def _section_default(self, battletag, region):
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        bt = battletag.lower()
         (std_entry, std_season), (wild_entry, wild_season) = await asyncio.gather(
-            self._fetch_entry(battletag, region, "standard", discord_id),
-            self._fetch_entry(battletag, region, "wild", discord_id),
+            self._fetch_entry(battletag, region, "standard"),
+            self._fetch_entry(battletag, region, "wild"),
         )
         async with get_db() as conn:
             std_season_row = await conn.fetchrow(
                 """
                 SELECT season_score, days_counted FROM player_season_score
-                WHERE discord_id = $1 AND region = $2 AND mode = $3 AND season_id = $4
+                WHERE battletag = $1 AND region = $2 AND mode = $3 AND season_id = $4
                 """,
-                discord_id, region, "standard", std_season,
+                bt, region, "standard", std_season,
             )
             std_today_row = await conn.fetchrow(
                 """
                 SELECT dps, legend_count FROM player_daily_dps
-                WHERE discord_id = $1 AND region = $2 AND mode = $3
+                WHERE battletag = $1 AND region = $2 AND mode = $3
                   AND season_id = $4 AND date_utc = $5
                 """,
-                discord_id, region, "standard", std_season, today,
+                bt, region, "standard", std_season, today,
             )
             std_best_row = await conn.fetchrow(
                 """
                 SELECT best_rank, legend_count FROM player_daily_dps
-                WHERE discord_id = $1 AND region = $2 AND mode = $3 AND season_id = $4
+                WHERE battletag = $1 AND region = $2 AND mode = $3 AND season_id = $4
                 ORDER BY best_rank ASC, updated_at DESC
                 LIMIT 1
                 """,
-                discord_id, region, "standard", std_season,
+                bt, region, "standard", std_season,
             )
             std_latest_legend_count = await conn.fetchval(
                 """
                 SELECT legend_count FROM player_daily_dps
-                WHERE discord_id = $1 AND region = $2 AND mode = $3 AND season_id = $4
+                WHERE battletag = $1 AND region = $2 AND mode = $3 AND season_id = $4
                 ORDER BY date_utc DESC, updated_at DESC
                 LIMIT 1
                 """,
-                discord_id, region, "standard", std_season,
+                bt, region, "standard", std_season,
             )
             wild_season_row = await conn.fetchrow(
                 """
                 SELECT season_score, days_counted FROM player_season_score
-                WHERE discord_id = $1 AND region = $2 AND mode = $3 AND season_id = $4
+                WHERE battletag = $1 AND region = $2 AND mode = $3 AND season_id = $4
                 """,
-                discord_id, region, "wild", wild_season,
+                bt, region, "wild", wild_season,
             )
             wild_today_row = await conn.fetchrow(
                 """
                 SELECT dps, legend_count FROM player_daily_dps
-                WHERE discord_id = $1 AND region = $2 AND mode = $3
+                WHERE battletag = $1 AND region = $2 AND mode = $3
                   AND season_id = $4 AND date_utc = $5
                 """,
-                discord_id, region, "wild", wild_season, today,
+                bt, region, "wild", wild_season, today,
             )
             wild_best_row = await conn.fetchrow(
                 """
                 SELECT best_rank, legend_count FROM player_daily_dps
-                WHERE discord_id = $1 AND region = $2 AND mode = $3 AND season_id = $4
+                WHERE battletag = $1 AND region = $2 AND mode = $3 AND season_id = $4
                 ORDER BY best_rank ASC, updated_at DESC
                 LIMIT 1
                 """,
-                discord_id, region, "wild", wild_season,
+                bt, region, "wild", wild_season,
             )
             wild_latest_legend_count = await conn.fetchval(
                 """
                 SELECT legend_count FROM player_daily_dps
-                WHERE discord_id = $1 AND region = $2 AND mode = $3 AND season_id = $4
+                WHERE battletag = $1 AND region = $2 AND mode = $3 AND season_id = $4
                 ORDER BY date_utc DESC, updated_at DESC
                 LIMIT 1
                 """,
-                discord_id, region, "wild", wild_season,
+                bt, region, "wild", wild_season,
             )
 
         def _rank_with_count(rank, legend_count):
@@ -381,7 +379,7 @@ class RankCommands(commands.Cog):
         ])
 
     @staticmethod
-    async def _fetch_entry(battletag, region, mode, discord_id):
+    async def _fetch_entry(battletag, region, mode):
         needle = battletag.lower().split("#")[0]
         async with get_db() as conn:
             # Current season is derived from the live leaderboard with month-rollover inference.
@@ -397,11 +395,11 @@ class RankCommands(commands.Cog):
                 """
                 SELECT rank, rating
                 FROM player_rank_log
-                WHERE discord_id = $1 AND region = $2 AND mode = $3 AND season_id = $4
+                WHERE battletag = $1 AND region = $2 AND mode = $3 AND season_id = $4
                 ORDER BY observed_at DESC
                 LIMIT 1
                 """,
-                discord_id, region.upper(), mode.lower(), season_id,
+                battletag.lower(), region.upper(), mode.lower(), season_id,
             )
             if row:
                 return LeaderboardEntry(
