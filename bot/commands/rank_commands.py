@@ -241,6 +241,15 @@ class RankCommands(commands.Cog):
                 """,
                 battletag.lower(), region, mode, season_id,
             )
+            legend_count = await conn.fetchval(
+                """
+                SELECT legend_count FROM player_daily_dps
+                WHERE battletag = $1 AND region = $2 AND mode = $3 AND season_id = $4
+                ORDER BY date_utc DESC, updated_at DESC
+                LIMIT 1
+                """,
+                battletag.lower(), region, mode, season_id,
+            )
 
         season_score = f"{season_row['season_score']:.2f}" if season_row else "-"
 
@@ -249,6 +258,9 @@ class RankCommands(commands.Cog):
             rank_str = "_Not found in top ranks this season._"
         else:
             rank_str = f"**#{entry.rank}**"
+            if legend_count:
+                percent = entry.rank / legend_count * 100
+                rank_str += f" ({percent:.0f}%)"
             if entry.rating:
                 rank_str += f"  (MMR {entry.rating})"
         return (
