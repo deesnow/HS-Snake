@@ -53,9 +53,16 @@ class AutoDetectCog(commands.Cog):
 
     async def _reply_deck_image(self, message: discord.Message, token: str) -> bool:
         """Decode *token* and reply with a deck image. Returns True on success."""
+        pending = await message.reply("⏳ Processing deck, please wait…", mention_author=False)
+
         try:
             deck = await self.decoder.decode(token)
+        except ValueError as exc:
+            await pending.edit(content=f"❌ Could not decode deck code: {exc}")
+            return False
         except Exception:
+            log.warning("Failed to decode deck from bot-mention, token=%.40s", token, exc_info=True)
+            await pending.edit(content="❌ Something went wrong while decoding the deck.")
             return False
 
         try:
@@ -66,9 +73,17 @@ class AutoDetectCog(commands.Cog):
                 file=file,
                 mention_author=False,
             )
+            try:
+                await pending.delete()
+            except Exception:
+                pass
             return True
-        except discord.HTTPException:
-            log.warning("Failed to send deck image reply in channel %s", message.channel.id)
+        except Exception:
+            log.warning("Failed to send deck image reply in channel %s", message.channel.id, exc_info=True)
+            try:
+                await pending.edit(content="❌ Failed to send the deck image.")
+            except Exception:
+                log.warning("Also failed to edit pending message in channel %s", message.channel.id)
             return False
 
     @commands.Cog.listener()
