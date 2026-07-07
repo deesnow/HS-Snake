@@ -49,6 +49,7 @@ Users can decode deck codes, analyse deck composition, render deck images, searc
 | `/rankset <battletag> <region>` | Register a BattleTag for a region (EU / US / AP) |
 | `/rankremove <region>` | Remove a BattleTag registration for a region |
 | `/rank [mode] [region]` | Look up legend rank from the cached leaderboard — all registered regions by default; optional mode (Standard, Wild, Classic, Battlegrounds, Battlegrounds Duo, Arena, Twist) and region filter |
+| `/rankchart <mode> <region> [season] [timeframe] [rank_type]` | Line chart of rank progress — Season (default) plots one point per day (day 1..days-in-month, Last or Best rank per day), Today plots every raw intraday observation; legend-player-count overlaid on a secondary axis. `season` defaults to the current season, or accepts `previous` / an explicit season number |
 
 ### Auto-Detection
 
@@ -134,6 +135,7 @@ A PostgreSQL container stores guild settings, user BattleTag registrations, and 
 | Deck decoding | [hearthstone](https://pypi.org/project/hearthstone/) | Official HS deck string parser (includes sideboard support) |
 | HTTP client | [httpx](https://www.python-httpx.org/) | Async-first, connection pooling |
 | Image rendering | [Pillow](https://pillow.readthedocs.io/) | Card image composition |
+| Chart rendering | [Matplotlib](https://matplotlib.org/) | Rank-progress line charts (`/rankchart`) |
 | Card data | [HearthstoneJSON](https://hearthstonejson.com/) | Community-maintained card DB |
 | Leaderboard data | Blizzard public API | `hearthstone.blizzard.com/en-us/api/community/leaderboardsData` |
 | Database | **PostgreSQL 16** via [asyncpg](https://magicstack.github.io/asyncpg/) | Guild settings, BattleTags, leaderboard cache |
@@ -218,6 +220,7 @@ hs-snake/
 │   │   ├── image_generator.py          # Compose deck image using Pillow
 │   │   ├── leaderboard_client.py       # Blizzard public leaderboard API client
 │   │   ├── leaderboard_cache.py        # PostgreSQL upsert cache + refresh logic
+│   │   ├── rank_chart.py               # player_rank_log queries + Matplotlib chart rendering
 │   │   ├── guild_settings.py           # Per-guild config CRUD
 │   │   └── db.py                       # asyncpg connection helper + migrations
 │   │
@@ -298,6 +301,21 @@ CREATE TABLE ldb_current_entries (
 );
 
 CREATE INDEX idx_ldb_current_btag ON ldb_current_entries (region, mode, battletag);
+
+-- Append-only rank observation log — one row per (registered) player sighting
+-- during a background refresh; powers /rankchart's day-by-day and intraday series.
+CREATE TABLE player_rank_log (
+    id          SERIAL  PRIMARY KEY,
+    battletag   TEXT    NOT NULL,       -- lower-cased
+    region      TEXT    NOT NULL,       -- EU | US | AP
+    mode        TEXT    NOT NULL,       -- standard | wild
+    season_id   INTEGER NOT NULL,
+    rank        INTEGER NOT NULL,
+    rating      INTEGER,
+    observed_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX idx_prl ON player_rank_log (battletag, region, mode, season_id, observed_at DESC);
 ```
 
 ---
@@ -399,6 +417,35 @@ Background refresh schedule (driven by `RankCommands` background tasks):
 | `_full_refresh` | 30 min | All pages | Full leaderboard coverage |
 
 Both tasks run for all 6 warm combos: EU/US/AP × Standard/Wild.
+
+---
+
+### `rank_chart`
+
+Queries `player_rank_log`/`player_daily_dps` and renders a PNG line chart for `/rankchart`. No Discord coupling.
+
+```
+async resolve_days_in_month(conn, region, mode, season_id) → int
+    # derives the season's calendar month from its own data (MAX observed date);
+    # works for current, previous, or any explicit season_id
+async fetch_season_series(conn, battletag, region, mode, season_id, rank_type, days_in_month)
+    → (days: List[int], ranks: List[int | None])       # 1..days_in_month, gaps = None
+async fetch_season_legend_counts(conn, battletag, region, mode, season_id, days_in_month)
+    → (days, legend_counts)
+async fetch_today_series(conn, battletag, region, mode, season_id)
+    → (times: List[datetime], ranks: List[int])         # every raw observation, no aggregation
+async fetch_today_legend_count(conn, battletag, region, mode, season_id) → int | None
+
+render_season_chart(battletag, region, mode, season_id, rank_type, days, ranks, legend_counts) → BytesIO
+render_today_chart(battletag, region, mode, season_id, times, ranks, legend_count) → BytesIO
+```
+
+- Season series aggregates `player_rank_log` per day: **Best** = `MIN(rank)` that day, **Last** = most recent observation that day. Days with no data are left as gaps (Matplotlib skips `None`/`NaN` points rather than connecting across them).
+- The command resolves `season_id` first (current / previous / explicit — same "previous = current − 1" convention `/glb` uses), then calls `resolve_days_in_month` so the x-axis always spans the correct month for whichever season was requested.
+- Legend-player count is rendered as a **filled area** (`ax.fill_between`), not a line, on a secondary axis — visually reads as "how deep into the legend pool this rank sits" rather than a second trend line.
+- Colors and opacity are **developer-configurable module constants** at the top of `rank_chart.py` (not Discord command options): `RANK_LINE_COLOR`, `LEGEND_AREA_COLOR`, `AXIS_COLOR`, `BACKGROUND_COLOR` (hex strings) each paired with a `*_TRANSPARENCY` integer percentage (0–100). `_rgba()` converts a hex+percent pair into an RGBA color; `_style_axes()` applies `BACKGROUND_COLOR`/`AXIS_COLOR` to the figure, axes, ticks, and spines of both renderers.
+- Rank axis is inverted (rank 1 at the top) and scaled to `[min, max]` of the player's own data ± ~15% padding — this is what makes the same chart work for a top-50 Standard climber and a top-8000 Wild grinder.
+- Legend-player count (`player_daily_dps.legend_count`) is drawn semi-transparent on a secondary axis (`ax.twinx()`) so it can't distort the rank axis's dynamic scaling.
 
 ---
 
@@ -513,6 +560,20 @@ Looks up the user's rank in `ldb_current_entries`.
 - With `mode`: shows that single mode for all regions (or filtered region)
 - BattleTag matching strips `#NNNN` suffix (Blizzard API returns names only)
 - If the DB has no data yet, returns a friendly "loading" message
+
+---
+
+### `/rankchart <mode> <region> [season] [timeframe] [rank_type]`
+
+Renders a rank-progress line chart from `player_rank_log` via the `rank_chart` service and attaches it as a PNG.
+
+- `mode` (required): Standard or Wild — the only two modes tracked in `player_rank_log`
+- `region` (required): EU / US / AP — one line per chart, so no "all regions" fan-out like `/rank`
+- `season` (default **current**): free-text — `current`, `previous` (current season's id − 1), or an explicit season number (e.g. `150`); invalid non-numeric values are rejected with an ephemeral error before the chart is generated
+- `timeframe` (default **Season**): Season → x-axis is season day 1..days-in-month (the month is derived from that season's own data via `rank_chart.resolve_days_in_month`, not assumed to be the current month — same approach `/glb` uses for its previous-season view); Today → x-axis is time-of-day
+- `rank_type` (default **Last**): for Season only — Last (most recent rank observed each day) or Best (lowest rank observed each day); ignored for Today, which always plots every raw observation
+- Legend-player count is overlaid semi-transparently on a secondary axis
+- Errors mirror `/rank`: unregistered region → "register with `/rankset` first"; no data yet → friendly message instead of a blank/broken image (this is also what happens if you combine a non-current `season` with `timeframe=Today`, since past seasons have no data dated "today")
 
 ---
 
@@ -720,6 +781,12 @@ services:
 - [x] **T-35** — Show E.T.C. sideboard in `/deck`, `/deckanalyze`, and `/deckimage`
 - [x] **T-36** — Unit test for deck code containing E.T.C. sideboard cards
 
+### Phase 12 — Rank Progress Chart ✅
+
+- [x] **T-37** — Implement `rank_chart.py`: season (best/last per day) and today (raw) series queries against `player_rank_log`, plus legend-count overlay from `player_daily_dps`
+- [x] **T-38** — Render PNG line charts with Matplotlib: inverted/dynamically-scaled rank axis, gap handling for missing days, secondary-axis legend-count overlay
+- [x] **T-39** — Implement `/rankchart` command (mode/region/timeframe/rank_type params)
+
 ---
 
 ## Future Improvements
@@ -729,7 +796,6 @@ services:
 | Zilliax 3000 sideboard | Card `102983` uses the same sideboard mechanism — expose its module selection similarly to E.T.C. |
 | Deck comparison | `/deckdiff code1 code2` — show added/removed cards between two versions |
 | HSReplay integration | Show winrate / meta tier for a pasted deck |
-| Per-user rank history | Track rank over time and show a sparkline graph |
 | Leaderboard top-N | `/leaderboard [region] [mode]` — list top players in a server |
 | Auto-update card DB | Scheduled task to pull new set data automatically on patch day |
 | Multi-language support | Locale-aware card names via HSJSON locale param (currently `enUS` only) |
