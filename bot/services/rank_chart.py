@@ -19,18 +19,28 @@ log = logging.getLogger(__name__)
 # ── Chart color configuration ────────────────────────────────────────────────
 # Colors are hex strings; *_TRANSPARENCY values are integer opacity percentages
 # (0 = fully transparent, 100 = fully opaque).
+# RANK_LINE_COLOR = "#3b48ff"
+# RANK_LINE_TRANSPARENCY = 100
 
-RANK_LINE_COLOR = "#3b48ff"
+# LEGEND_AREA_COLOR = "#ff9f40"
+# LEGEND_AREA_TRANSPARENCY = 35
+
+# AXIS_COLOR = "#33333378"
+# AXIS_TRANSPARENCY = 100
+
+# BACKGROUND_COLOR = "#ffffff2f"
+# BACKGROUND_TRANSPARENCY = 100
+
+RANK_LINE_COLOR = "#5865F2"       # Discord blurple
 RANK_LINE_TRANSPARENCY = 100
-
-LEGEND_AREA_COLOR = "#ff9f40"
-LEGEND_AREA_TRANSPARENCY = 35
-
-AXIS_COLOR = "#33333378"
+LEGEND_AREA_COLOR = "#FAA61A"     # Discord amber
+LEGEND_AREA_TRANSPARENCY = 25
+AXIS_COLOR = "#B9BBBE"            # Discord's muted text gray
 AXIS_TRANSPARENCY = 100
+BACKGROUND_COLOR = "#313338"      # Discord dark-theme chat background
+BACKGROUND_TRANSPARENCY = 100     # or set to 0 for a transparent PNG that blends into any theme
 
-BACKGROUND_COLOR = "#ffffff2f"
-BACKGROUND_TRANSPARENCY = 100
+
 
 
 def _rgba(hex_color, transparency_pct):
@@ -161,8 +171,8 @@ def render_season_chart(battletag, region, mode, season_id, rank_type, days, ran
     rank_color = _rgba(RANK_LINE_COLOR, RANK_LINE_TRANSPARENCY)
 
     ax1.plot(days, ranks, marker="o", markersize=4, color=rank_color, label="Rank")
-    ax1.invert_yaxis()
     ax1.set_ylim(*_rank_axis_limits(ranks))
+    ax1.invert_yaxis()
     ax1.set_xlim(1, max(days))
     ax1.set_xlabel("Season Day")
     ax1.set_ylabel("Rank (lower is better)", color=rank_color)
@@ -178,9 +188,13 @@ def render_season_chart(battletag, region, mode, season_id, rank_type, days, ran
         ax2.set_ylabel("Legend Players", color=legend_color)
         axes.append(ax2)
 
+        # twinx() draws ax2 above ax1 by default; flip so the rank line stays on top.
+        ax1.set_zorder(ax2.get_zorder() + 1)
+        ax1.patch.set_visible(False)
+
     rank_type_label = "Best" if rank_type == "best" else "Last"
-    fig.suptitle(f"{battletag} — {mode.title()} ({region}) · Season {season_id}")
-    ax1.set_title(f"{rank_type_label} rank per day", fontsize=10)
+    fig.suptitle(f"{battletag} — {mode.title()} ({region}) · Season {season_id}", color=AXIS_COLOR)
+    ax1.set_title(f"{rank_type_label} rank per day", fontsize=10, color=AXIS_COLOR)
 
     _style_axes(fig, *axes)
     buf = io.BytesIO()
@@ -195,8 +209,8 @@ def render_today_chart(battletag, region, mode, season_id, times, ranks, legend_
     rank_color = _rgba(RANK_LINE_COLOR, RANK_LINE_TRANSPARENCY)
 
     ax1.plot(times, ranks, marker="o", markersize=4, color=rank_color, label="Rank")
-    ax1.invert_yaxis()
     ax1.set_ylim(*_rank_axis_limits(ranks))
+    ax1.invert_yaxis()
     ax1.set_xlabel("Time (UTC)")
     ax1.set_ylabel("Rank (lower is better)", color=rank_color)
     ax1.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
@@ -211,8 +225,12 @@ def render_today_chart(battletag, region, mode, season_id, times, ranks, legend_
         ax2.set_ylabel("Legend Players", color=legend_color)
         axes.append(ax2)
 
-    fig.suptitle(f"{battletag} — {mode.title()} ({region}) · Season {season_id}")
-    ax1.set_title("Today's rank", fontsize=10)
+        # twinx() draws ax2 above ax1 by default; flip so the rank line stays on top.
+        ax1.set_zorder(ax2.get_zorder() + 1)
+        ax1.patch.set_visible(False)
+
+    fig.suptitle(f"{battletag} — {mode.title()} ({region}) · Season {season_id}", color=AXIS_COLOR)
+    ax1.set_title("Today's rank", fontsize=10, color=AXIS_COLOR)
 
     _style_axes(fig, *axes)
     buf = io.BytesIO()
