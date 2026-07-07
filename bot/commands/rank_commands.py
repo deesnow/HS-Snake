@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from bot.services import leaderboard_cache, rank_chart
 from bot.services.db import get_db
 from bot.services.leaderboard_client import LeaderboardEntry
-from bot.services.season_id import resolve_current_season_id
+from bot.services.season_id import parse_season_arg, resolve_current_season_id, resolve_season_id_by_arg
 
 log = logging.getLogger(__name__)
 
@@ -269,17 +269,13 @@ class RankCommands(commands.Cog):
         timeframe_value = timeframe.value if timeframe else "season"
         rank_type_value = rank_type.value if rank_type else "last"
 
-        season_raw = (season or "current").strip().lower()
-        explicit_season_id = None
-        if season_raw not in ("current", "previous"):
-            try:
-                explicit_season_id = int(season_raw)
-            except ValueError:
-                await interaction.response.send_message(
-                    "❌ Invalid `season` value. Use `current`, `previous`, or a season number (e.g. `150`).",
-                    ephemeral=True,
-                )
-                return
+        season_raw = parse_season_arg(season)
+        if season_raw is None:
+            await interaction.response.send_message(
+                "❌ Invalid `season` value. Use `current`, `previous`, or a season number (e.g. `150`).",
+                ephemeral=True,
+            )
+            return
 
         async with get_db() as conn:
             row = await conn.fetchrow(
@@ -297,14 +293,7 @@ class RankCommands(commands.Cog):
         await interaction.response.defer()
         try:
             async with get_db() as conn:
-                if season_raw == "current":
-                    season_id = await resolve_current_season_id(conn, region.value, mode.value)
-                elif season_raw == "previous":
-                    current_season_id = await resolve_current_season_id(conn, region.value, mode.value)
-                    season_id = None if current_season_id is None else current_season_id - 1
-                else:
-                    season_id = explicit_season_id
-
+                season_id = await resolve_season_id_by_arg(conn, region.value, mode.value, season_raw)
                 if season_id is None:
                     raise RuntimeError(
                         f"Leaderboard data for {region.value}/{mode.value} is not available yet. "
@@ -354,6 +343,80 @@ class RankCommands(commands.Cog):
             await interaction.followup.send(content=f"⏳ {exc}")
         except Exception:
             log.exception("/rankchart failed for user=%s", interaction.user)
+            await interaction.followup.send(
+                content="❌ Something went wrong generating the chart. Please try again."
+            )
+
+    @app_commands.command(
+        name="rcc",
+        description="Show a daily rank candlestick chart (open/close/best/worst per day).",
+    )
+    @app_commands.describe(
+        mode="Game mode",
+        region="Region your BattleTag is registered under",
+        season="Current (default), 'previous', or a specific season number (e.g. 150)",
+    )
+    @app_commands.choices(
+        mode=_CHART_MODE_CHOICES,
+        region=_REGION_CHOICES,
+    )
+    async def rcc(
+        self,
+        interaction: discord.Interaction,
+        mode: app_commands.Choice[str],
+        region: app_commands.Choice[str],
+        season: Optional[str] = None,
+    ) -> None:
+        season_raw = parse_season_arg(season)
+        if season_raw is None:
+            await interaction.response.send_message(
+                "❌ Invalid `season` value. Use `current`, `previous`, or a season number (e.g. `150`).",
+                ephemeral=True,
+            )
+            return
+
+        async with get_db() as conn:
+            row = await conn.fetchrow(
+                "SELECT battletag FROM user_battletags WHERE discord_id = $1 AND region = $2",
+                str(interaction.user.id), region.value,
+            )
+        if row is None:
+            await interaction.response.send_message(
+                f"❌ No BattleTag registered for **{region.value}**. Use `/rankset` first.",
+                ephemeral=True,
+            )
+            return
+        battletag = row["battletag"]
+
+        await interaction.response.defer()
+        try:
+            async with get_db() as conn:
+                season_id = await resolve_season_id_by_arg(conn, region.value, mode.value, season_raw)
+                if season_id is None:
+                    raise RuntimeError(
+                        f"Leaderboard data for {region.value}/{mode.value} is not available yet. "
+                        "The bot is still loading data in the background — please try again in a few minutes."
+                    )
+
+                candles = await rank_chart.fetch_season_candles(
+                    conn, battletag.lower(), region.value, mode.value, season_id
+                )
+                if not candles:
+                    await interaction.followup.send(
+                        "❌ No rank data recorded yet this season. Try again later."
+                    )
+                    return
+                buf = rank_chart.render_candlestick_chart(
+                    battletag, region.value, mode.value, season_id, candles
+                )
+
+            file = discord.File(fp=buf, filename="rcc.png")
+            await interaction.followup.send(file=file)
+        except RuntimeError as exc:
+            log.exception("/rcc: user=%s RuntimeError: %s", interaction.user.id, exc)
+            await interaction.followup.send(content=f"⏳ {exc}")
+        except Exception:
+            log.exception("/rcc failed for user=%s", interaction.user)
             await interaction.followup.send(
                 content="❌ Something went wrong generating the chart. Please try again."
             )

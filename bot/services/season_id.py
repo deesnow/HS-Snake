@@ -62,3 +62,35 @@ async def resolve_current_season_id(conn, region: str, mode: str) -> Optional[in
         return current_season_id + 1
 
     return current_season_id
+
+
+async def resolve_season_id_by_arg(conn, region: str, mode: str, season_raw: str) -> Optional[int]:
+    """
+    Resolve a season_id from a normalized `season` command argument.
+
+    season_raw must already be normalized/validated to one of: "current", "previous",
+    or a string containing an explicit season number (see parse_season_arg).
+    Returns None if there's no leaderboard data yet to resolve "current"/"previous" from.
+    """
+    if season_raw == "previous":
+        current_season_id = await resolve_current_season_id(conn, region, mode)
+        return None if current_season_id is None else current_season_id - 1
+    if season_raw == "current":
+        return await resolve_current_season_id(conn, region, mode)
+    return int(season_raw)
+
+
+def parse_season_arg(season: Optional[str]) -> Optional[str]:
+    """
+    Normalize a raw `season` command option to "current", "previous", or a numeric
+    string, for use with resolve_season_id_by_arg. Returns None if the input is
+    non-numeric and isn't "current"/"previous" (i.e. invalid).
+    """
+    season_raw = (season or "current").strip().lower()
+    if season_raw in ("current", "previous"):
+        return season_raw
+    try:
+        int(season_raw)
+    except ValueError:
+        return None
+    return season_raw

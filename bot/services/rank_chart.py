@@ -6,6 +6,7 @@ import io
 import logging
 from calendar import monthrange
 from datetime import datetime, timezone
+from itertools import groupby
 
 import matplotlib
 matplotlib.use("Agg")
@@ -13,6 +14,7 @@ import matplotlib.colors as mcolors
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.patches import Rectangle
 
 log = logging.getLogger(__name__)
 
@@ -39,6 +41,16 @@ AXIS_COLOR = "#B9BBBE"            # Discord's muted text gray
 AXIS_TRANSPARENCY = 100
 BACKGROUND_COLOR = "#313338"      # Discord dark-theme chat background
 BACKGROUND_TRANSPARENCY = 100     # or set to 0 for a transparent PNG that blends into any theme
+
+# Candlestick colors (/rcc). "Bullish"/"bearish" are relative to rank, not price:
+# a day is bullish (rank improved) when the closing rank is numerically LOWER than
+# the opening rank, since lower rank is better.
+BULLISH_COLOR = "#23A55A"         # Discord green — rank improved during the day
+BULLISH_TRANSPARENCY = 100
+BEARISH_COLOR = "#F23F42"         # Discord red — rank worsened during the day
+BEARISH_TRANSPARENCY = 100
+DOJI_COLOR = "#949BA4"            # open == close (no net change)
+DOJI_TRANSPARENCY = 100
 
 
 
@@ -159,6 +171,34 @@ async def fetch_today_legend_count(conn, battletag, region, mode, season_id):
     )
 
 
+async def fetch_season_candles(conn, battletag, region, mode, season_id):
+    """
+    One OHLC candle per day the player has data — no placeholder entries for days
+    without any observation, so the x-axis only ever shows days with real data.
+    open/close = first/last rank observed that day; low/high = best/worst rank that day.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT (observed_at AT TIME ZONE 'UTC')::date AS day, rank
+        FROM player_rank_log
+        WHERE battletag = $1 AND region = $2 AND mode = $3 AND season_id = $4
+        ORDER BY day, observed_at
+        """,
+        battletag, region, mode, season_id,
+    )
+    candles = []
+    for day, group in groupby(rows, key=lambda r: r["day"]):
+        ranks = [r["rank"] for r in group]
+        candles.append({
+            "day": day.day,
+            "open": ranks[0],
+            "close": ranks[-1],
+            "low": min(ranks),
+            "high": max(ranks),
+        })
+    return candles
+
+
 def _rank_axis_limits(ranks):
     values = [r for r in ranks if r is not None]
     lo, hi = min(values), max(values)
@@ -233,6 +273,56 @@ def render_today_chart(battletag, region, mode, season_id, times, ranks, legend_
     ax1.set_title("Today's rank", fontsize=10, color=AXIS_COLOR)
 
     _style_axes(fig, *axes)
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    buf.seek(0)
+    return buf
+
+
+def render_candlestick_chart(battletag, region, mode, season_id, candles):
+    """
+    One candle per entry in `candles` (see fetch_season_candles), plotted at
+    consecutive x positions labeled with their actual day-of-month — days with no
+    data are simply absent from `candles`, so no gaps appear on the x-axis.
+    """
+    fig, ax1 = plt.subplots(figsize=(10, 5))
+    axis_color = _rgba(AXIS_COLOR, AXIS_TRANSPARENCY)
+
+    axis_lo, axis_hi = _rank_axis_limits([v for c in candles for v in (c["low"], c["high"])])
+    epsilon = max(1, round((axis_hi - axis_lo) * 0.01))
+    body_width = 0.6
+
+    for i, c in enumerate(candles):
+        open_r, close_r = c["open"], c["close"]
+        if close_r < open_r:
+            color = _rgba(BULLISH_COLOR, BULLISH_TRANSPARENCY)   # rank improved
+        elif close_r > open_r:
+            color = _rgba(BEARISH_COLOR, BEARISH_TRANSPARENCY)   # rank worsened
+        else:
+            color = _rgba(DOJI_COLOR, DOJI_TRANSPARENCY)
+
+        ax1.plot([i, i], [c["low"], c["high"]], color=color, linewidth=1, zorder=2)
+        body_bottom = min(open_r, close_r)
+        body_height = max(abs(close_r - open_r), epsilon)
+        ax1.add_patch(Rectangle(
+            (i - body_width / 2, body_bottom), body_width, body_height,
+            facecolor=color, edgecolor=color, zorder=3,
+        ))
+
+    ax1.set_xlim(-0.5, len(candles) - 0.5)
+    ax1.set_ylim(axis_lo, axis_hi)
+    ax1.invert_yaxis()
+    ax1.set_xticks(range(len(candles)))
+    ax1.set_xticklabels([str(c["day"]) for c in candles])
+    ax1.set_xlabel("Season Day")
+    ax1.set_ylabel("Rank (lower is better)", color=axis_color)
+    ax1.grid(True, alpha=0.3, axis="y")
+
+    fig.suptitle(f"{battletag} — {mode.title()} ({region}) · Season {season_id}", color=AXIS_COLOR)
+    ax1.set_title("Daily rank — open / close / best / worst", fontsize=10, color=AXIS_COLOR)
+
+    _style_axes(fig, ax1)
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
     plt.close(fig)
