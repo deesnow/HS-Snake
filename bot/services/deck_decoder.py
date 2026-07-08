@@ -102,8 +102,10 @@ class DeckDecoder:
 
         _ETC_BAND_MANAGER = 90749
         _ZILLIAX_DELUXE_3000 = 102983
+        _KING_OF_THE_UNDERBELLY = 125998
         etc_entries: list[CardEntry] = []
         zilliax_entries: list[CardEntry] = []
+        king_entries: list[CardEntry] = []
         for card_id, count, sideboard_owner in (raw_deck.sideboards or []):
             if sideboard_owner == _ETC_BAND_MANAGER:
                 card = await self._client.get_card(card_id)
@@ -117,6 +119,12 @@ class DeckDecoder:
                     log.warning("Unknown dbfId=%s in Zilliax sideboard, skipping", card_id)
                     continue
                 zilliax_entries.append(CardEntry(card=card, count=count))
+            elif sideboard_owner == _KING_OF_THE_UNDERBELLY:
+                card = await self._client.get_card(card_id)
+                if card is None:
+                    log.warning("Unknown dbfId=%s in King of the Underbelly sideboard, skipping", card_id)
+                    continue
+                king_entries.append(CardEntry(card=card, count=count))
 
         if zilliax_entries:
             from dataclasses import replace
@@ -141,9 +149,10 @@ class DeckDecoder:
             cards=card_entries,
             etc_sideboard_cards=etc_entries,
             zilliax_sideboard_cards=zilliax_entries,
+            king_sideboard_cards=king_entries,
         )
         log.debug(
-            "decode success class=%s format=%s cards=%d etc_sideboard=%d zilliax_sideboard=%d",
-            hero_class, format_label, len(card_entries), len(etc_entries), len(zilliax_entries),
+            "decode success class=%s format=%s cards=%d etc_sideboard=%d zilliax_sideboard=%d king_sideboard=%d",
+            hero_class, format_label, len(card_entries), len(etc_entries), len(zilliax_entries), len(king_entries),
         )
         return result

@@ -15,9 +15,9 @@ See [DESIGN.md](DESIGN.md) for the full architecture and task breakdown.
 
 | Command | Description |
 |---|---|
-| `/deck <code>` | Decode a deck code and display a card list with rarity icons, mana cost, format label, and total dust cost. Decks containing **E.T.C. Band Manager** show the 3 sideboard cards in a separate section. |
-| `/deckanalyze <code>` | Detailed grouped analysis: cards split by type (Minions, Spells, Weapons, Locations, Heroes), subtype/tribe info, mana curve bar chart, and a dedicated **E.T.C. Band Manager sideboard** section when present. |
-| `/deckimage <code>` | Render a visual image of the deck with card thumbnails. E.T.C. sideboard cards are included after the main deck cards. |
+| `/deck <code>` | Decode a deck code and display a card list with rarity icons, mana cost, format label, and total dust cost. Decks containing **E.T.C. Band Manager** or **King of the Underbelly** show their 3 sideboard cards in a separate section. |
+| `/deckanalyze <code>` | Detailed grouped analysis: cards split by type (Minions, Spells, Weapons, Locations, Heroes), subtype/tribe info, mana curve bar chart, and dedicated **E.T.C. Band Manager** / **King of the Underbelly** sideboard sections when present. |
+| `/deckimage <code>` | Render a visual image of the deck with card thumbnails. E.T.C. / King of the Underbelly sideboard cards are included after the main deck cards. |
 
 ### Card Commands
 
