@@ -113,6 +113,13 @@ ZILLIAX_DBF_ID = 102983
 ZILLIAX_BRACKET_COLOR  = (150, 220, 255, 230)   # cyan-silver
 ZILLIAX_SIDEBOARD_TINT = (200, 230, 255, 110)   # pale cyan overlay
 
+# ── King of the Underbelly dbfId ───────────────────────────────────────
+# Contraband Beast cards are placed immediately after King of the Underbelly
+# and rendered with a pale amber overlay + a bronze bracket around the group.
+KING_DBF_ID = 125998
+KING_BRACKET_COLOR  = (200, 120,  60, 230)   # bronze
+KING_SIDEBOARD_TINT = (255, 220, 180, 110)   # pale amber overlay
+
 
 
 def _fixed_crop(im: Image.Image) -> Image.Image:
@@ -196,14 +203,21 @@ class ImageGenerator:
             if deck.zilliax_sideboard_cards else []
         )
 
+        sorted_king_side = (
+            sorted(deck.king_sideboard_cards, key=lambda e: (e.card.cost, e.card.name))
+            if deck.king_sideboard_cards else []
+        )
+
         # ── Build flat entries list ────────────────────────────────────
-        # ETC/Zilliax sideboard cards are injected immediately after their owner.
+        # ETC/Zilliax/King sideboard cards are injected immediately after their owner.
         # Fabled companions are already included in sorted_main (deck.cards).
         entries: list[CardEntry] = []
         etc_group_start: int | None = None
         etc_group_size: int = 0
         zilliax_group_start: int | None = None
         zilliax_group_size: int = 0
+        king_group_start: int | None = None
+        king_group_size: int = 0
 
         for e in sorted_main:
             card_idx = len(entries)
@@ -216,6 +230,10 @@ class ImageGenerator:
                 zilliax_group_start = card_idx
                 zilliax_group_size = 1 + len(sorted_zilliax_side)
 
+            if e.card.dbf_id == KING_DBF_ID and king_group_start is None and sorted_king_side:
+                king_group_start = card_idx
+                king_group_size = 1 + len(sorted_king_side)
+
             entries.append(e)
 
             if e.card.dbf_id == ETC_DBF_ID and sorted_etc_side and etc_group_start == card_idx:
@@ -223,6 +241,9 @@ class ImageGenerator:
 
             if e.card.dbf_id == ZILLIAX_DBF_ID and sorted_zilliax_side and zilliax_group_start == card_idx:
                 entries.extend(sorted_zilliax_side)
+
+            if e.card.dbf_id == KING_DBF_ID and sorted_king_side and king_group_start == card_idx:
+                entries.extend(sorted_king_side)
 
         n = len(entries)
 
@@ -272,6 +293,7 @@ class ImageGenerator:
         row_gap = round(card_h * ROW_GAP_FRAC)
         etc_group_positions: list[tuple[int, int]] = []
         zilliax_group_positions: list[tuple[int, int]] = []
+        king_group_positions: list[tuple[int, int]] = []
 
         for idx, (entry, raw) in enumerate(zip(entries, image_data)):
             x = (idx % cols) * card_w
@@ -295,6 +317,15 @@ class ImageGenerator:
             if in_zilliax_group:
                 zilliax_group_positions.append((x, y))
 
+            # King of the Underbelly group membership
+            in_king_group = (
+                king_group_start is not None
+                and king_group_start <= idx < king_group_start + king_group_size
+            )
+            is_king_sideboard = in_king_group and idx > king_group_start
+            if in_king_group:
+                king_group_positions.append((x, y))
+
             # ── Count label — pasted BEFORE the card so the card image
             #    covers its top; the bottom protrudes below the card frame.
             if entry.count >= 2:
@@ -317,6 +348,10 @@ class ImageGenerator:
 
             if is_zilliax_sideboard:
                 tint = Image.new("RGBA", (card_w, card_h), ZILLIAX_SIDEBOARD_TINT)
+                canvas.paste(tint, (x, y), mask=tint)
+
+            if is_king_sideboard:
+                tint = Image.new("RGBA", (card_w, card_h), KING_SIDEBOARD_TINT)
                 canvas.paste(tint, (x, y), mask=tint)
 
         # ── ETC group bracket ─────────────────────────────────────────
@@ -346,6 +381,21 @@ class ImageGenerator:
                 bracket_draw.rectangle(
                     [min(xs) - pad, ry - pad, max(xs) + card_w + pad, ry + card_h + pad],
                     outline=ZILLIAX_BRACKET_COLOR,
+                    width=bw,
+                )
+
+        # ── King of the Underbelly group bracket ───────────────────────
+        if king_group_positions:
+            bracket_draw = ImageDraw.Draw(canvas)
+            pad = max(3, card_w // 120)
+            bw  = max(5, card_w // 80)
+            rows_map = {}
+            for (px, py) in king_group_positions:
+                rows_map.setdefault(py, []).append(px)
+            for ry, xs in rows_map.items():
+                bracket_draw.rectangle(
+                    [min(xs) - pad, ry - pad, max(xs) + card_w + pad, ry + card_h + pad],
+                    outline=KING_BRACKET_COLOR,
                     width=bw,
                 )
 
