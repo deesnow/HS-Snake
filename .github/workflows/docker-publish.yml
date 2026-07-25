@@ -13,6 +13,18 @@ jobs:
       contents: read
       packages: write         # required to push to GHCR
 
+    strategy:
+      matrix:
+        include:
+          - name: bot
+            image: ghcr.io/deesnow/hs-snake
+            context: .
+            file: docker/bot/Dockerfile
+          - name: rank-api
+            image: ghcr.io/deesnow/hs-snake-rank-api
+            context: ./decktrackerAPI
+            file: decktrackerAPI/Dockerfile
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,7 +40,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: ${{ matrix.image }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -38,8 +50,8 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          context: .
-          file: docker/bot/Dockerfile
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
