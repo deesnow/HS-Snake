@@ -46,3 +46,5 @@ tests/cards_export_all_keys.xlsx
 tests/cards_export.xlsx
 tests/export_hs_cards_to_excel.py
 ToDo.MD
+payload-definition.md
+.gitignore
