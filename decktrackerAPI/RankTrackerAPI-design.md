@@ -134,15 +134,29 @@ Plain `{"status": "ok"}`, `200`. Used by the Docker healthcheck and as the
 
 ## Auth / Token Lifecycle
 
-Token issuance and revocation are **not** implemented by this service —
-they're planned as a future bot command (e.g. `/ranktoken generate`,
-`/ranktoken revoke`) that would insert/update rows in `rank_api_tokens`
-directly (or via a shared helper), keyed by the requesting Discord user's
-`discord_id`. Until that command exists, tokens are provisioned manually:
+Token issuance and revocation are handled by the bot's `/hdttoken` slash
+command (`bot/commands/hdttoken_commands.py`), **not** by this service
+directly — RankTrackerAPI only ever reads `rank_api_tokens` (to
+authenticate `/API` requests and bump `last_used_at`); the bot is the sole
+writer of that table's rows.
+
+`/hdttoken`:
+- If the calling user (`discord_id = str(interaction.user.id)`) has no
+  active (`revoked_at IS NULL`) token: generates one
+  (`secrets.token_urlsafe(32)`), DMs the plaintext to the user, then stores
+  only its SHA-256 hash.
+- If they already have one: shows a Confirm/Cancel view first (regenerating
+  immediately revokes the old token — the DM warns of this). On confirm,
+  the old row is marked `revoked_at = now()` and a new row is inserted in
+  the same DB transaction.
+- The plaintext token is sent by DM and is **never** shown in the
+  originating channel or logged; only its hash ever reaches Postgres.
+
+For ad-hoc/manual provisioning (e.g. local testing without going through
+Discord), hash a token client-side and insert it directly — no `pgcrypto`
+extension needed:
 
 ```bash
-# token = a securely-generated random string handed to the user out-of-band.
-# Hash it client-side (no pgcrypto extension needed) and insert the hex digest:
 TOKEN_HASH=$(python -c "import hashlib; print(hashlib.sha256(b'<token>').hexdigest())")
 docker exec hs-snake-postgres-1 psql -U hs-snake_user -d hs-snake_db -c \
   "INSERT INTO rank_api_tokens (discord_id, token_hash, label) VALUES ('<discord_id>', '$TOKEN_HASH', 'manual');"
@@ -210,14 +224,20 @@ Cloudflare Tunnel token:
 - [x] `rank-api` + `cloudflared` services in `docker-compose.yml`
       (token-based tunnel — `CLOUDFLARE_TUNNEL_TOKEN` from `.env`).
 - [x] `rank-api` dev override in `docker-compose.dev.yml`.
-- [ ] Cloudflare Tunnel provisioned (manual, one-time — dashboard tunnel +
-      public hostname route + `CLOUDFLARE_TUNNEL_TOKEN` in `.env`).
+- [x] Cloudflare Tunnel provisioned (`dee-service.cc` public hostname route
+      → `http://rank-api:8000`; verified end-to-end over HTTPS).
 
 ### Phase 3 — CI ✅
 - [x] `docker-publish.yml` matrix-builds and publishes
       `ghcr.io/deesnow/hs-snake-rank-api` alongside the bot image.
 
-### Future — Token lifecycle (bot-side, out of scope for this phase)
-- [ ] `/ranktoken generate` / `/ranktoken revoke` bot commands.
+### Phase 4 — Token lifecycle (bot-side) ✅
+- [x] `/hdttoken` bot command: issues a token on first use, requires
+      Confirm/Cancel to regenerate (auto-revokes the old one), delivers the
+      plaintext via DM only (`bot/commands/hdttoken_commands.py`).
+
+### Future
 - [ ] Endpoints/commands to query `rank_tracker_matches` back out
       (dashboards, `/rank` integration, etc.).
+- [ ] A standalone `/hdttoken revoke` (without regenerating) if users need
+      to disable uploads without immediately re-issuing a new token.

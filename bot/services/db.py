@@ -66,6 +66,20 @@ async def _migrate(conn: asyncpg.Connection) -> None:
             PRIMARY KEY (discord_id, region)
         );
 
+        -- Bearer tokens for RankTrackerAPI (decktrackerAPI/), shared with the bot via
+        -- the same Postgres instance. Authoritative schema lives in
+        -- decktrackerAPI/decktrackerAPI/db.py — mirrored here defensively so /hdttoken
+        -- works even if this table hasn't been created by that service yet.
+        CREATE TABLE IF NOT EXISTS rank_api_tokens (
+            id           SERIAL PRIMARY KEY,
+            discord_id   TEXT NOT NULL,
+            token_hash   TEXT NOT NULL UNIQUE,
+            label        TEXT,
+            created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+            revoked_at   TIMESTAMPTZ,
+            last_used_at TIMESTAMPTZ
+        );
+
         -- Live upsert table: one row per (region, mode, rank), always current.
         CREATE TABLE IF NOT EXISTS ldb_current_entries (
             region         TEXT    NOT NULL,
