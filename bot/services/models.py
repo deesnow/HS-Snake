@@ -41,6 +41,7 @@ class DeckInfo:
     cards: list = field(default_factory=list)           # List[CardEntry]
     etc_sideboard_cards: list = field(default_factory=list)  # List[CardEntry] — E.T.C. Band Manager sideboard
     zilliax_sideboard_cards: list = field(default_factory=list)  # List[CardEntry] — Zilliax Deluxe 3000 modules
+    king_sideboard_cards: list = field(default_factory=list)  # List[CardEntry] — King of the Underbelly sideboard
 
     @property
     def total_cards(self) -> int:

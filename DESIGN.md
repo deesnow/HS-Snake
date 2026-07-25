@@ -31,9 +31,9 @@ Users can decode deck codes, analyse deck composition, render deck images, searc
 
 | Command | Description |
 |---|---|
-| `/deck <code>` | Decode a deck code — simple card list with rarity icons, mana cost, format, and dust total. E.T.C. Band Manager sideboard cards shown in a separate section. |
-| `/deckanalyze <code>` | Detailed analysis: cards grouped by type (Minions/Spells/Weapons/Locations/Heroes), subtype/tribe column, mana curve bar chart, and E.T.C. Band Manager sideboard section. |
-| `/deckimage <code>` | Render a visual deck image with card thumbnails, including E.T.C. sideboard cards. |
+| `/deck <code>` | Decode a deck code — simple card list with rarity icons, mana cost, format, and dust total. E.T.C. Band Manager / King of the Underbelly sideboard cards shown in a separate section. |
+| `/deckanalyze <code>` | Detailed analysis: cards grouped by type (Minions/Spells/Weapons/Locations/Heroes), subtype/tribe column, mana curve bar chart, and E.T.C. Band Manager / King of the Underbelly sideboard sections. |
+| `/deckimage <code>` | Render a visual deck image with card thumbnails, including E.T.C. / King of the Underbelly sideboard cards. |
 
 ### Card Commands
 
@@ -190,7 +190,7 @@ Sideboard section (appended after main cards):
 [varint count][card_id, count, sideboard_owner, ...] ← multi-copy entries
 ```
 
-The `sideboard_owner` identifies which card holds the sideboard (e.g. `90749` for E.T.C. Band Manager, `102983` for Zilliax 3000). The `hearthstone` Python library handles encoding/decoding transparently; `DeckDecoder` reads `raw_deck.sideboards` and filters for owner `90749`.
+The `sideboard_owner` identifies which card holds the sideboard (e.g. `90749` for E.T.C. Band Manager, `102983` for Zilliax 3000, `125998` for King of the Underbelly). The `hearthstone` Python library handles encoding/decoding transparently; `DeckDecoder` reads `raw_deck.sideboards` and filters by owner dbfId.
 
 ---
 
@@ -798,6 +798,7 @@ services:
 - [x] **T-34** — Read `raw_deck.sideboards` in `DeckDecoder`; populate `DeckInfo.etc_sideboard_cards`
 - [x] **T-35** — Show E.T.C. sideboard in `/deck`, `/deckanalyze`, and `/deckimage`
 - [x] **T-36** — Unit test for deck code containing E.T.C. sideboard cards
+- [x] **T-40** — Extend sideboard handling to King of the Underbelly (dbfId `125998`), which uses the same 3-card sideboard mechanism as E.T.C.; populates `DeckInfo.king_sideboard_cards` and renders in `/deck`, `/deckanalyze`, and `/deckimage`
 
 ### Phase 12 — Rank Progress Chart ✅
 
