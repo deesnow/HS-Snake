@@ -161,10 +161,22 @@ async def _migrate(conn: asyncpg.Connection) -> None:
     # ── Normalize column types that may differ from old schema ───────────────
     # Converts any TEXT timestamp columns to TIMESTAMPTZ, and any DATE date_utc
     # columns to TEXT, so the whole codebase can use consistent Python types.
+    #
+    # Scoped to _BOT_OWNED_TABLES only: this DB is shared with RankTrackerAPI
+    # (decktrackerAPI/), which owns/migrates its own tables independently.
+    # Without this scope, the "LIKE '%_at'" pattern below (a bare "_" is a
+    # single-char wildcard, not a literal underscore) also matches unrelated
+    # columns like rank_tracker_matches.format ("...m" + "at"), and previously
+    # ALTERed that column to TIMESTAMPTZ out from under RankTrackerAPI.
     await conn.execute("""
         DO $$
         DECLARE
             col RECORD;
+            bot_tables CONSTANT TEXT[] := ARRAY[
+                'guild_settings', 'monitored_channels', 'user_battletags',
+                'ldb_current_entries', 'ldb_refresh_log', 'player_rank_log',
+                'player_daily_best', 'player_daily_dps', 'player_season_score'
+            ];
         BEGIN
             -- Normalize *_at / observed_at / completed_at columns: TEXT → TIMESTAMPTZ
             FOR col IN
@@ -172,7 +184,8 @@ async def _migrate(conn: asyncpg.Connection) -> None:
                 FROM information_schema.columns
                 WHERE table_schema = 'public'
                   AND data_type = 'text'
-                  AND (column_name LIKE '%_at')
+                  AND column_name ~ '_at$'
+                  AND table_name = ANY(bot_tables)
             LOOP
                 EXECUTE format(
                     'ALTER TABLE %I ALTER COLUMN %I TYPE TIMESTAMPTZ USING %I::TIMESTAMPTZ',
@@ -187,6 +200,7 @@ async def _migrate(conn: asyncpg.Connection) -> None:
                 WHERE table_schema = 'public'
                   AND column_name = 'date_utc'
                   AND data_type = 'date'
+                  AND table_name = ANY(bot_tables)
             LOOP
                 EXECUTE format(
                     'ALTER TABLE %I ALTER COLUMN date_utc TYPE TEXT USING date_utc::text',
