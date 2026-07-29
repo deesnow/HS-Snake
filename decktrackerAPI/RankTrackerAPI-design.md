@@ -102,13 +102,25 @@ CREATE TABLE IF NOT EXISTS rank_tracker_matches (
 
 CREATE INDEX IF NOT EXISTS idx_rank_tracker_matches_battletag
     ON rank_tracker_matches (player_battletag, end_time DESC);
+
+-- Added after the table above shipped (the plugin didn't send region at
+-- first) — a separate additive ALTER, not part of the CREATE TABLE, so
+-- pre-existing rows land with region = NULL rather than failing migration.
+ALTER TABLE rank_tracker_matches ADD COLUMN IF NOT EXISTS region TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_rank_tracker_matches_battletag_ci
+    ON rank_tracker_matches (LOWER(player_battletag), end_time DESC);
 ```
 
 `rank_api_tokens.token_hash` stores only a SHA-256 digest — the plaintext
 bearer token is generated, handed to the user once, and never persisted.
 `rank_tracker_matches.game_id` is the primary key, enforcing the
 idempotency requirement directly at the DB level (`ON CONFLICT (game_id) DO
-NOTHING`).
+NOTHING`). `region` is nullable and normalized to uppercase on ingest
+(`decktrackerAPI/models.py:MatchUpload._normalize_region`) — expected values
+are `EU`/`US`/`AP`/`UNKNOWN`/`CHINA` per `payload-definition.md`'s "Region"
+section; anything else is still stored (just logged as unrecognized) rather
+than rejected.
 
 ## Endpoints
 
@@ -236,8 +248,21 @@ Cloudflare Tunnel token:
       Confirm/Cancel to regenerate (auto-revokes the old one), delivers the
       plaintext via DM only (`bot/commands/hdttoken_commands.py`).
 
+### Phase 5 — Region support ✅
+- [x] `region TEXT` column (nullable, additive `ALTER TABLE`) on
+      `rank_tracker_matches`, plus a case-insensitive battletag lookup index,
+      for the bot's Bronze→Diamond chart queries (`/rankchart`, `/rcc`) to
+      scope matches by region — see `../ToDo.MD` Phase 13/14+.
+- [x] `MatchUpload.region` accepts the plugin's new `region` field (optional,
+      for backward compatibility with pre-region plugin builds), normalized
+      to uppercase, logged (not rejected) on an unrecognized value.
+
 ### Future
 - [ ] Endpoints/commands to query `rank_tracker_matches` back out
       (dashboards, `/rank` integration, etc.).
 - [ ] A standalone `/hdttoken revoke` (without regenerating) if users need
       to disable uploads without immediately re-issuing a new token.
+- [ ] Confirm real ingested `region` values from the updated HDT plugin
+      actually match `EU`/`US`/`AP`/`UNKNOWN` in practice (see `../ToDo.MD`
+      T-43) — nothing in this service enforces that shape today, only logs a
+      warning if it's ever violated.

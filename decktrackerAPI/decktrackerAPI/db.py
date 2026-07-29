@@ -85,3 +85,13 @@ async def _migrate(conn: asyncpg.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_rank_tracker_matches_battletag
             ON rank_tracker_matches (player_battletag, end_time DESC);
     """)
+
+    # Additive: `region` wasn't in the original payload contract — the RankTracker
+    # plugin only started sending it later. Pre-migration rows keep region = NULL;
+    # region-filtered queries simply treat those as unattributed.
+    await conn.execute("""
+        ALTER TABLE rank_tracker_matches ADD COLUMN IF NOT EXISTS region TEXT;
+
+        CREATE INDEX IF NOT EXISTS idx_rank_tracker_matches_battletag_ci
+            ON rank_tracker_matches (LOWER(player_battletag), end_time DESC);
+    """)

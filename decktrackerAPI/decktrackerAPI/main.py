@@ -71,14 +71,14 @@ async def upload_match(request: Request, token: TokenRecord = Depends(get_curren
             """
             INSERT INTO rank_tracker_matches (
                 game_id, token_id, schema_version, start_time, end_time, game_mode, format,
-                result, was_conceded, player_battletag, opponent_battletag,
+                result, was_conceded, region, player_battletag, opponent_battletag,
                 league_id, rank, star_level, stars, legend_rank,
                 star_level_after, stars_after, legend_rank_after
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7,
-                $8, $9, $10, $11,
-                $12, $13, $14, $15, $16,
-                $17, $18, $19
+                $8, $9, $10, $11, $12,
+                $13, $14, $15, $16, $17,
+                $18, $19, $20
             )
             ON CONFLICT (game_id) DO NOTHING
             """,
@@ -91,6 +91,7 @@ async def upload_match(request: Request, token: TokenRecord = Depends(get_curren
             payload.format,
             payload.result,
             payload.was_conceded,
+            payload.region,
             payload.player_battletag,
             payload.opponent_battletag,
             payload.rank.league_id,
