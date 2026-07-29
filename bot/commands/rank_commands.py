@@ -11,18 +11,47 @@ import logging
 import re
 from typing import Optional
 
+import asyncpg
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
-from bot.services import leaderboard_cache, rank_chart
+from bot.services import leaderboard_cache, rank_chart, rank_tracker_data
 from bot.services.db import get_db
 from bot.services.leaderboard_client import LeaderboardEntry
-from bot.services.season_id import parse_season_arg, resolve_current_season_id, resolve_season_id_by_arg
+from bot.services.rank_scale import AxisMapper
+from bot.services.season_id import (
+    parse_season_arg,
+    resolve_current_season_id,
+    resolve_season_id_by_arg,
+    resolve_season_month_range,
+)
 
 log = logging.getLogger(__name__)
+
+
+async def _fetch_tracker_points_safe(conn, battletag, region, mode, start, end):
+    """
+    rank_tracker_data.fetch_tracker_points, degrading to "no tracker data" (an
+    empty list, so callers fall back to player_rank_log alone — the
+    pre-Bronze-Diamond behavior) if rank_tracker_matches.region doesn't exist
+    yet. Guards a deploy-ordering race: the bot and rank-api containers start
+    in parallel (docker-compose.yml has no depends_on between them), so the
+    bot's queries against the region column can briefly run before
+    decktrackerAPI's own migration has created it.
+    """
+    try:
+        return await rank_tracker_data.fetch_tracker_points(conn, battletag, region, mode, start, end)
+    except asyncpg.exceptions.UndefinedColumnError:
+        log.warning(
+            "rank_tracker_matches.region not available yet (deploy-ordering race?) — "
+            "falling back to leaderboard-only data for battletag=%s region=%s mode=%s",
+            battletag, region, mode,
+        )
+        return []
+
 
 _BATTLETAG_RE = re.compile(r"^\w+#\d+$")
 
@@ -302,38 +331,71 @@ class RankCommands(commands.Cog):
 
                 bt = battletag.lower()
                 if timeframe_value == "today":
-                    times, ranks = await rank_chart.fetch_today_series(
+                    now = datetime.now(timezone.utc)
+                    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+                    today_end = today_start + timedelta(days=1)
+
+                    raw_times, raw_ranks = await rank_chart.fetch_today_series(
                         conn, bt, region.value, mode.value, season_id
                     )
-                    if not ranks:
+                    tracker_points = await _fetch_tracker_points_safe(
+                        conn, bt, region.value, mode.value, today_start, today_end
+                    )
+                    merged = rank_tracker_data.merge_with_rank_log(
+                        list(zip(raw_times, raw_ranks)), tracker_points
+                    )
+                    if not merged:
                         await interaction.followup.send(
                             "❌ No rank data recorded yet today. Try again later."
                         )
                         return
+
+                    mapper = AxisMapper([point for _, point in merged])
+                    times = [ts for ts, _ in merged]
+                    positions = [mapper.position(point) for _, point in merged]
+
                     legend_count = await rank_chart.fetch_today_legend_count(
                         conn, bt, region.value, mode.value, season_id
                     )
                     buf = rank_chart.render_today_chart(
-                        battletag, region.value, mode.value, season_id, times, ranks, legend_count
+                        battletag, region.value, mode.value, season_id,
+                        times, positions, mapper, legend_count,
                     )
                 else:
-                    days_in_month = await rank_chart.resolve_days_in_month(
+                    month_start, next_month_start, days_in_month = await resolve_season_month_range(
                         conn, region.value, mode.value, season_id
                     )
-                    days, ranks = await rank_chart.fetch_season_series(
-                        conn, bt, region.value, mode.value, season_id, rank_type_value, days_in_month
+                    rank_log_points = await rank_chart.fetch_rank_log_points(
+                        conn, bt, region.value, mode.value, season_id
                     )
-                    if not any(r is not None for r in ranks):
+                    tracker_points = await _fetch_tracker_points_safe(
+                        conn, bt, region.value, mode.value, month_start, next_month_start
+                    )
+                    merged = rank_tracker_data.merge_with_rank_log(rank_log_points, tracker_points)
+                    if not merged:
                         await interaction.followup.send(
                             "❌ No rank data recorded yet this season. Try again later."
                         )
                         return
+
+                    mapper = AxisMapper([point for _, point in merged])
+                    daily = rank_tracker_data.aggregate_by_day(merged, mapper)
+
+                    days = list(range(1, days_in_month + 1))
+                    positions = []
+                    for d in days:
+                        ohlc = daily.get(date(month_start.year, month_start.month, d))
+                        if ohlc is None:
+                            positions.append(None)
+                        else:
+                            positions.append(ohlc.low if rank_type_value == "best" else ohlc.close)
+
                     _, legend_counts = await rank_chart.fetch_season_legend_counts(
                         conn, bt, region.value, mode.value, season_id, days_in_month
                     )
                     buf = rank_chart.render_season_chart(
                         battletag, region.value, mode.value, season_id, rank_type_value,
-                        days, ranks, legend_counts,
+                        days, positions, mapper, legend_counts,
                     )
 
             file = discord.File(fp=buf, filename="rankchart.png")
@@ -398,16 +460,32 @@ class RankCommands(commands.Cog):
                         "The bot is still loading data in the background — please try again in a few minutes."
                     )
 
-                candles = await rank_chart.fetch_season_candles(
-                    conn, battletag.lower(), region.value, mode.value, season_id
+                bt = battletag.lower()
+                month_start, next_month_start, _days_in_month = await resolve_season_month_range(
+                    conn, region.value, mode.value, season_id
                 )
-                if not candles:
+                rank_log_points = await rank_chart.fetch_rank_log_points(
+                    conn, bt, region.value, mode.value, season_id
+                )
+                tracker_points = await _fetch_tracker_points_safe(
+                    conn, bt, region.value, mode.value, month_start, next_month_start
+                )
+                merged = rank_tracker_data.merge_with_rank_log(rank_log_points, tracker_points)
+                if not merged:
                     await interaction.followup.send(
                         "❌ No rank data recorded yet this season. Try again later."
                     )
                     return
+
+                mapper = AxisMapper([point for _, point in merged])
+                daily = rank_tracker_data.aggregate_by_day(merged, mapper)
+                candles = [
+                    {"day": day.day, "open": ohlc.open, "close": ohlc.close,
+                     "low": ohlc.low, "high": ohlc.high}
+                    for day, ohlc in sorted(daily.items())
+                ]
                 buf = rank_chart.render_candlestick_chart(
-                    battletag, region.value, mode.value, season_id, candles
+                    battletag, region.value, mode.value, season_id, candles, mapper
                 )
 
             file = discord.File(fp=buf, filename="rcc.png")
