@@ -381,14 +381,28 @@ class RankCommands(commands.Cog):
                     mapper = AxisMapper([point for _, point in merged])
                     daily = rank_tracker_data.aggregate_by_day(merged, mapper)
 
+                    now = datetime.now(timezone.utc)
+                    if next_month_start > now:
+                        # Season's month is still in progress — don't forward-fill
+                        # past today, or the line would predict days that haven't happened.
+                        today_day = min(days_in_month, (now.date() - month_start.date()).days + 1)
+                    else:
+                        today_day = days_in_month
+
                     days = list(range(1, days_in_month + 1))
                     positions = []
+                    last_known = None
                     for d in days:
                         ohlc = daily.get(date(month_start.year, month_start.month, d))
                         if ohlc is None:
-                            positions.append(None)
+                            # No observation that day (player didn't play / wasn't tracked) —
+                            # carry the last known rank forward so the line stays continuous
+                            # instead of breaking, but only up through today. Days before the
+                            # first observation, or after today, stay None.
+                            positions.append(last_known if d <= today_day else None)
                         else:
-                            positions.append(ohlc.low if rank_type_value == "best" else ohlc.close)
+                            last_known = ohlc.low if rank_type_value == "best" else ohlc.close
+                            positions.append(last_known)
 
                     _, legend_counts = await rank_chart.fetch_season_legend_counts(
                         conn, bt, region.value, mode.value, season_id, days_in_month
