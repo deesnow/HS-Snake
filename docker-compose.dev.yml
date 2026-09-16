@@ -27,3 +27,25 @@ services:
       -- python -m bot.main
     networks:
       - internal
+
+  rank-api:
+    build:
+      context: ./decktrackerAPI
+      dockerfile: Dockerfile
+    volumes:
+      - ./decktrackerAPI/decktrackerAPI:/app/decktrackerAPI
+    working_dir: /app
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: hs-snake_user
+      POSTGRES_PASSWORD: hs-snake_password
+      POSTGRES_DB: hs-snake_db
+    command: >
+      python -m watchdog.watchmedo auto-restart
+      --patterns='*.py'
+      --recursive
+      --debug-force-polling
+      -- python -m uvicorn decktrackerAPI.main:app --host 0.0.0.0 --port 8000
+    networks:
+      - internal

@@ -1,8 +1,9 @@
 """
 Helpers for resolving leaderboard season IDs across month rollover.
 """
-from datetime import datetime, timezone
-from typing import Optional
+from calendar import monthrange
+from datetime import date, datetime, timezone
+from typing import Optional, Tuple
 
 
 async def resolve_current_season_id(conn, region: str, mode: str) -> Optional[int]:
@@ -62,6 +63,59 @@ async def resolve_current_season_id(conn, region: str, mode: str) -> Optional[in
         return current_season_id + 1
 
     return current_season_id
+
+
+async def resolve_season_month(conn, region: str, mode: str, season_id: int) -> date:
+    """
+    Calendar month (as its first-of-month date) a season_id falls in.
+
+    Derived from ldb_refresh_log — the append-only refresh audit log, keyed only
+    by region+mode+season_id, never battletag. This works for ANY season_id,
+    including ones a specific player has zero data for (e.g. they never reached
+    Legend that month), unlike deriving the month from a player's own
+    player_rank_log rows. It also works for past seasons, unlike
+    ldb_current_entries, which is a live-upsert table that only ever holds the
+    *current* season's rows and loses history on every rollover.
+
+    Falls back to the current month if the season has no refresh-log rows yet
+    (e.g. immediately after rollover, before the first refresh cycle completes).
+    """
+    region_value = region.upper()
+    mode_value = mode.lower()
+
+    completed_at = await conn.fetchval(
+        """
+        SELECT MIN(completed_at) FROM ldb_refresh_log
+        WHERE region = $1 AND mode = $2 AND season_id = $3
+        """,
+        region_value, mode_value, season_id,
+    )
+    if completed_at is None:
+        completed_at = datetime.now(timezone.utc)
+
+    return completed_at.date().replace(day=1)
+
+
+async def resolve_season_month_range(
+    conn, region: str, mode: str, season_id: int
+) -> Tuple[datetime, datetime, int]:
+    """
+    (month_start, next_month_start, days_in_month) for a season, as UTC-aware
+    datetimes suitable for TIMESTAMPTZ range filters (e.g. rank_tracker_matches
+    queries: `end_time >= month_start AND end_time < next_month_start`).
+
+    Built on resolve_season_month, so it shares the same guarantees (works for
+    any season_id, including ones a given player has zero data for, and past
+    seasons — not just the current one).
+    """
+    month_start_date = await resolve_season_month(conn, region, mode, season_id)
+    days_in_month = monthrange(month_start_date.year, month_start_date.month)[1]
+    month_start = datetime(month_start_date.year, month_start_date.month, 1, tzinfo=timezone.utc)
+    if month_start_date.month == 12:
+        next_month_start = datetime(month_start_date.year + 1, 1, 1, tzinfo=timezone.utc)
+    else:
+        next_month_start = datetime(month_start_date.year, month_start_date.month + 1, 1, tzinfo=timezone.utc)
+    return month_start, next_month_start, days_in_month
 
 
 async def resolve_season_id_by_arg(conn, region: str, mode: str, season_raw: str) -> Optional[int]:

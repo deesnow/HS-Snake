@@ -40,6 +40,48 @@ services:
       retries: 3
       start_period: 10s
 
+  # ── RankTrackerAPI ──────────────────────────────────────────────────
+  # Service name must be a valid DNS hostname (no underscores) — it's used
+  # directly as the origin host in the Cloudflare Tunnel's public hostname
+  # route (http://rank-api:8000), and Cloudflare's URL validator rejects
+  # underscores there even though Docker's own DNS tolerates them.
+  rank-api:
+    image: ghcr.io/deesnow/hs-snake-rank-api:${RANK_API_TAG:-latest}
+    pull_policy: always
+    env_file: .env
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: hs-snake_user
+      POSTGRES_PASSWORD: hs-snake_password
+      POSTGRES_DB: hs-snake_db
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ── Cloudflare Tunnel (exposes rank-api publicly) ───────────────────
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run
+    env_file: .env
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      rank-api:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - internal
+
   # ── PgSQL DB service ─────────────────────────────────────────
 
   postgres:

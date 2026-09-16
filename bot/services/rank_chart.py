@@ -1,12 +1,16 @@
 """
 Rank progression chart: queries player_rank_log/player_daily_dps and renders
-a PNG line chart showing rank over time for /rankchart.
+a PNG line chart showing rank over time for /rankchart and /rcc.
+
+Chart y-values are AxisMapper [0,1] positions, not raw ranks — see
+bot/services/rank_scale.py and bot/services/rank_tracker_data.py, which
+merge this module's player_rank_log data with rank_tracker_matches
+(Bronze-Diamond, all leagues) before it ever reaches these render functions.
 """
 import io
 import logging
 from calendar import monthrange
 from datetime import datetime, timezone
-from itertools import groupby
 
 import matplotlib
 matplotlib.use("Agg")
@@ -15,6 +19,8 @@ import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import Rectangle
+
+from bot.services.season_id import resolve_season_month
 
 log = logging.getLogger(__name__)
 
@@ -73,52 +79,13 @@ def _style_axes(fig, *axes):
 
 async def resolve_days_in_month(conn, region, mode, season_id):
     """
-    Days in the calendar month a season falls in, derived from that season's own
-    data (seasons are calendar months). Works for the current season as well as
-    any previous/explicit season_id. Falls back to the current month only when a
-    season has no data yet (e.g. right after rollover, before any observation).
+    Days in the calendar month a season falls in (seasons are calendar months).
+    Thin wrapper over season_id.resolve_season_month, which derives the month
+    from the global ldb_refresh_log table rather than a specific player's data —
+    so this works even for a player with zero Legend observations that season.
     """
-    max_date = await conn.fetchval(
-        """
-        SELECT MAX((observed_at AT TIME ZONE 'UTC')::date)
-        FROM player_rank_log
-        WHERE region = $1 AND mode = $2 AND season_id = $3
-        """,
-        region, mode, season_id,
-    )
-    if max_date is None:
-        max_date = datetime.now(timezone.utc).date()
-    return monthrange(max_date.year, max_date.month)[1]
-
-
-async def fetch_season_series(conn, battletag, region, mode, season_id, rank_type, days_in_month):
-    """One (day, rank) point per day for the season, 1..days_in_month."""
-    if rank_type == "best":
-        rows = await conn.fetch(
-            """
-            SELECT (observed_at AT TIME ZONE 'UTC')::date AS day, MIN(rank) AS rank
-            FROM player_rank_log
-            WHERE battletag = $1 AND region = $2 AND mode = $3 AND season_id = $4
-            GROUP BY day ORDER BY day
-            """,
-            battletag, region, mode, season_id,
-        )
-    else:
-        rows = await conn.fetch(
-            """
-            SELECT DISTINCT ON ((observed_at AT TIME ZONE 'UTC')::date)
-                   (observed_at AT TIME ZONE 'UTC')::date AS day, rank
-            FROM player_rank_log
-            WHERE battletag = $1 AND region = $2 AND mode = $3 AND season_id = $4
-            ORDER BY (observed_at AT TIME ZONE 'UTC')::date, observed_at DESC
-            """,
-            battletag, region, mode, season_id,
-        )
-
-    by_day = {row["day"].day: row["rank"] for row in rows}
-    days = list(range(1, days_in_month + 1))
-    ranks = [by_day.get(d) for d in days]
-    return days, ranks
+    month_start = await resolve_season_month(conn, region, mode, season_id)
+    return monthrange(month_start.year, month_start.month)[1]
 
 
 async def fetch_season_legend_counts(conn, battletag, region, mode, season_id, days_in_month):
@@ -160,6 +127,26 @@ async def fetch_today_series(conn, battletag, region, mode, season_id):
     return times, ranks
 
 
+async def fetch_rank_log_points(conn, battletag, region, mode, season_id):
+    """
+    Every raw (observed_at, rank) observation for the whole season, no
+    aggregation — the season-wide counterpart to fetch_today_series's
+    single-day raw fetch. Feeds rank_tracker_data.merge_with_rank_log, which
+    needs real observation timestamps (not one pre-aggregated point per day)
+    to interleave correctly with rank_tracker_matches' per-match points.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT observed_at, rank
+        FROM player_rank_log
+        WHERE battletag = $1 AND region = $2 AND mode = $3 AND season_id = $4
+        ORDER BY observed_at
+        """,
+        battletag, region, mode, season_id,
+    )
+    return [(row["observed_at"], row["rank"]) for row in rows]
+
+
 async def fetch_today_legend_count(conn, battletag, region, mode, season_id):
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     return await conn.fetchval(
@@ -171,48 +158,20 @@ async def fetch_today_legend_count(conn, battletag, region, mode, season_id):
     )
 
 
-async def fetch_season_candles(conn, battletag, region, mode, season_id):
+def render_season_chart(battletag, region, mode, season_id, rank_type, days, positions, mapper, legend_counts):
     """
-    One OHLC candle per day the player has data — no placeholder entries for days
-    without any observation, so the x-axis only ever shows days with real data.
-    open/close = first/last rank observed that day; low/high = best/worst rank that day.
+    `positions` are AxisMapper [0,1] values (one per day 1..len(days), None for
+    days with no data), not raw ranks — see rank_tracker_data.aggregate_by_day.
+    `mapper` supplies the tick-label formatter (raw position -> "Legend #123" /
+    "Platinum 5").
     """
-    rows = await conn.fetch(
-        """
-        SELECT (observed_at AT TIME ZONE 'UTC')::date AS day, rank
-        FROM player_rank_log
-        WHERE battletag = $1 AND region = $2 AND mode = $3 AND season_id = $4
-        ORDER BY day, observed_at
-        """,
-        battletag, region, mode, season_id,
-    )
-    candles = []
-    for day, group in groupby(rows, key=lambda r: r["day"]):
-        ranks = [r["rank"] for r in group]
-        candles.append({
-            "day": day.day,
-            "open": ranks[0],
-            "close": ranks[-1],
-            "low": min(ranks),
-            "high": max(ranks),
-        })
-    return candles
-
-
-def _rank_axis_limits(ranks):
-    values = [r for r in ranks if r is not None]
-    lo, hi = min(values), max(values)
-    pad = max(1, round((hi - lo) * 0.15))
-    return max(1, lo - pad), hi + pad
-
-
-def render_season_chart(battletag, region, mode, season_id, rank_type, days, ranks, legend_counts):
     fig, ax1 = plt.subplots(figsize=(9, 5))
     rank_color = _rgba(RANK_LINE_COLOR, RANK_LINE_TRANSPARENCY)
 
-    ax1.plot(days, ranks, marker="o", markersize=4, color=rank_color, label="Rank")
-    ax1.set_ylim(*_rank_axis_limits(ranks))
+    ax1.plot(days, positions, marker="o", markersize=4, color=rank_color, label="Rank")
+    ax1.set_ylim(0, 1)
     ax1.invert_yaxis()
+    ax1.yaxis.set_major_formatter(mapper.formatter())
     ax1.set_xlim(1, max(days))
     ax1.set_xlabel("Season Day")
     ax1.set_ylabel("Rank (lower is better)", color=rank_color)
@@ -244,13 +203,15 @@ def render_season_chart(battletag, region, mode, season_id, rank_type, days, ran
     return buf
 
 
-def render_today_chart(battletag, region, mode, season_id, times, ranks, legend_count):
+def render_today_chart(battletag, region, mode, season_id, times, positions, mapper, legend_count):
+    """`positions`/`mapper`: see render_season_chart's docstring."""
     fig, ax1 = plt.subplots(figsize=(9, 5))
     rank_color = _rgba(RANK_LINE_COLOR, RANK_LINE_TRANSPARENCY)
 
-    ax1.plot(times, ranks, marker="o", markersize=4, color=rank_color, label="Rank")
-    ax1.set_ylim(*_rank_axis_limits(ranks))
+    ax1.plot(times, positions, marker="o", markersize=4, color=rank_color, label="Rank")
+    ax1.set_ylim(0, 1)
     ax1.invert_yaxis()
+    ax1.yaxis.set_major_formatter(mapper.formatter())
     ax1.set_xlabel("Time (UTC)")
     ax1.set_ylabel("Rank (lower is better)", color=rank_color)
     ax1.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
@@ -280,39 +241,47 @@ def render_today_chart(battletag, region, mode, season_id, times, ranks, legend_
     return buf
 
 
-def render_candlestick_chart(battletag, region, mode, season_id, candles):
+_CANDLE_MIN_BODY_HEIGHT = 0.01  # position-space (uniform [0,1] regardless of Legend/sub-Legend/mixed)
+
+
+def render_candlestick_chart(battletag, region, mode, season_id, candles, mapper):
     """
-    One candle per entry in `candles` (see fetch_season_candles), plotted at
-    consecutive x positions labeled with their actual day-of-month — days with no
-    data are simply absent from `candles`, so no gaps appear on the x-axis.
+    One candle per entry in `candles` (see rank_tracker_data.aggregate_by_day),
+    plotted at consecutive x positions labeled with their actual day-of-month —
+    days with no data are simply absent from `candles`, so no gaps appear on
+    the x-axis. `candles` values (open/close/low/high) are AxisMapper [0,1]
+    positions, not raw ranks. The minimum candle body height is now a fixed
+    fraction of the [0,1] axis rather than derived from the data's raw range —
+    positions are already uniformly scaled regardless of whether a day was
+    Legend, sub-Legend, or (the day Legend was first reached) both, so a fixed
+    epsilon keeps candle bodies visually proportionate across all three cases.
     """
     fig, ax1 = plt.subplots(figsize=(10, 5))
     axis_color = _rgba(AXIS_COLOR, AXIS_TRANSPARENCY)
 
-    axis_lo, axis_hi = _rank_axis_limits([v for c in candles for v in (c["low"], c["high"])])
-    epsilon = max(1, round((axis_hi - axis_lo) * 0.01))
     body_width = 0.6
 
     for i, c in enumerate(candles):
-        open_r, close_r = c["open"], c["close"]
-        if close_r < open_r:
+        open_p, close_p = c["open"], c["close"]
+        if close_p < open_p:
             color = _rgba(BULLISH_COLOR, BULLISH_TRANSPARENCY)   # rank improved
-        elif close_r > open_r:
+        elif close_p > open_p:
             color = _rgba(BEARISH_COLOR, BEARISH_TRANSPARENCY)   # rank worsened
         else:
             color = _rgba(DOJI_COLOR, DOJI_TRANSPARENCY)
 
         ax1.plot([i, i], [c["low"], c["high"]], color=color, linewidth=1, zorder=2)
-        body_bottom = min(open_r, close_r)
-        body_height = max(abs(close_r - open_r), epsilon)
+        body_bottom = min(open_p, close_p)
+        body_height = max(abs(close_p - open_p), _CANDLE_MIN_BODY_HEIGHT)
         ax1.add_patch(Rectangle(
             (i - body_width / 2, body_bottom), body_width, body_height,
             facecolor=color, edgecolor=color, zorder=3,
         ))
 
     ax1.set_xlim(-0.5, len(candles) - 0.5)
-    ax1.set_ylim(axis_lo, axis_hi)
+    ax1.set_ylim(0, 1)
     ax1.invert_yaxis()
+    ax1.yaxis.set_major_formatter(mapper.formatter())
     ax1.set_xticks(range(len(candles)))
     ax1.set_xticklabels([str(c["day"]) for c in candles])
     ax1.set_xlabel("Season Day")

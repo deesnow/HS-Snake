@@ -45,6 +45,7 @@ class HsSnakeBot(commands.Bot):
         await self.load_extension("bot.commands.search_commands")
         await self.load_extension("bot.commands.rank_commands")
         await self.load_extension("bot.commands.guild_lb_commands")
+        await self.load_extension("bot.commands.hdttoken_commands")
 
         # Sync slash commands (guild-scoped during dev, global in prod)
         if settings.discord_guild_id:

@@ -49,8 +49,8 @@ Users can decode deck codes, analyse deck composition, render deck images, searc
 | `/rankset <battletag> <region>` | Register a BattleTag for a region (EU / US / AP) |
 | `/rankremove <region>` | Remove a BattleTag registration for a region |
 | `/rank [mode] [region]` | Look up legend rank from the cached leaderboard — all registered regions by default; optional mode (Standard, Wild, Classic, Battlegrounds, Battlegrounds Duo, Arena, Twist) and region filter |
-| `/rankchart <mode> <region> [season] [timeframe] [rank_type]` | Line chart of rank progress — Season (default) plots one point per day (day 1..days-in-month, Last or Best rank per day), Today plots every raw intraday observation; legend-player-count overlaid on a secondary axis. `season` defaults to the current season, or accepts `previous` / an explicit season number |
-| `/rcc <mode> <region> [season]` | Candlestick chart of daily rank — one candle per day the player has data (no placeholder for days without data): body spans opening/closing rank that day (green if rank improved, red if it worsened, gray for no change), wick spans that day's best/worst rank |
+| `/rankchart <mode> <region> [season] [timeframe] [rank_type]` | Line chart of rank progress, Bronze→Diamond and Legend combined — Season (default) plots one point per day (day 1..days-in-month, Last or Best rank per day), Today plots every raw intraday observation; legend-player-count overlaid on a secondary axis. `season` defaults to the current season, or accepts `previous` / an explicit season number |
+| `/rcc <mode> <region> [season]` | Candlestick chart of daily rank, Bronze→Diamond and Legend combined — one candle per day the player has data (no placeholder for days without data): body spans opening/closing rank that day (green if rank improved, red if it worsened, gray for no change), wick spans that day's best/worst rank |
 
 ### Auto-Detection
 
@@ -136,7 +136,7 @@ A PostgreSQL container stores guild settings, user BattleTag registrations, and 
 | Deck decoding | [hearthstone](https://pypi.org/project/hearthstone/) | Official HS deck string parser (includes sideboard support) |
 | HTTP client | [httpx](https://www.python-httpx.org/) | Async-first, connection pooling |
 | Image rendering | [Pillow](https://pillow.readthedocs.io/) | Card image composition |
-| Chart rendering | [Matplotlib](https://matplotlib.org/) | Rank-progress line charts (`/rankchart`) |
+| Chart rendering | [Matplotlib](https://matplotlib.org/) | Rank-progress line and candlestick charts (`/rankchart`, `/rcc`) |
 | Card data | [HearthstoneJSON](https://hearthstonejson.com/) | Community-maintained card DB |
 | Leaderboard data | Blizzard public API | `hearthstone.blizzard.com/en-us/api/community/leaderboardsData` |
 | Database | **PostgreSQL 16** via [asyncpg](https://magicstack.github.io/asyncpg/) | Guild settings, BattleTags, leaderboard cache |
@@ -421,36 +421,48 @@ Both tasks run for all 6 warm combos: EU/US/AP × Standard/Wild.
 
 ---
 
-### `rank_chart`
+### `rank_chart`, `rank_scale`, `rank_tracker_data`
 
-Queries `player_rank_log`/`player_daily_dps` and renders a PNG line chart for `/rankchart`. No Discord coupling.
+Three modules split by concern, together powering `/rankchart` and `/rcc`. No Discord coupling in any of them.
 
-```
-async resolve_days_in_month(conn, region, mode, season_id) → int
-    # derives the season's calendar month from its own data (MAX observed date);
-    # works for current, previous, or any explicit season_id
-async fetch_season_series(conn, battletag, region, mode, season_id, rank_type, days_in_month)
-    → (days: List[int], ranks: List[int | None])       # 1..days_in_month, gaps = None
-async fetch_season_legend_counts(conn, battletag, region, mode, season_id, days_in_month)
-    → (days, legend_counts)
-async fetch_today_series(conn, battletag, region, mode, season_id)
-    → (times: List[datetime], ranks: List[int])         # every raw observation, no aggregation
-async fetch_today_legend_count(conn, battletag, region, mode, season_id) → int | None
-async fetch_season_candles(conn, battletag, region, mode, season_id)
-    → List[{day, open, close, low, high}]   # one entry per day WITH data; no gap entries
+- **`rank_scale`** — pure Bronze→Diamond/Legend rank math (no DB, no `matplotlib.pyplot`): `league_label(star_level)` ("Platinum 5"-style label), `climb_score(star_level, stars, stars_per_level=3)` (monotonic ordinal distance-to-Legend, `stars` clamped so the score never regresses across a level-up), `classify(star_level, stars, legend_rank) → RankPoint(kind, ordinal)` (Legend vs sub-Legend, both "lower ordinal = better"), and `AxisMapper` — maps a batch of `RankPoint`s to `[0,1]` chart positions: single-regime data (all-Legend or all-sub-Legend, still the common case for most players) gets the *entire* axis tightly cropped to its own range; a season that spans both gets a Legend band (top, `1 - SUBLEGEND_AXIS_FRACTION`) and a sub-Legend band (bottom, `SUBLEGEND_AXIS_FRACTION`, default `1/6`), each independently cropped. `AxisMapper.formatter()` returns a `matplotlib.ticker.FuncFormatter` for human tick labels ("Legend #123" / "Platinum 5").
+- **`rank_tracker_data`** — queries `rank_tracker_matches` (decktrackerAPI's per-match, all-league upload table, `league_id = 5` only) and merges it with `rank_chart`'s `player_rank_log` data:
+  ```
+  async fetch_tracker_points(conn, battletag, region, mode, start, end)
+      → List[(timestamp, star_level, stars, legend_rank)]   # 2 points/match: pre- and post-match state
+  merge_with_rank_log(rank_log_points, tracker_points) → List[(timestamp, RankPoint)]
+      # true chronological union — NEVER excludes either source for a given day
+  aggregate_by_day(merged_points, axis_mapper) → dict[date, DayOHLC]
+      # open/close/low/high computed in AxisMapper position-space, not raw ordinals
+  ```
+  The merge is intentionally point-level, not day-level: `player_rank_log` (leaderboard scrape, Legend-only) keeps showing real movement on a day with no tracked match (plugin wasn't running, upload dropped), while `rank_tracker_matches` adds all-league, per-match granularity wherever it's available.
+- **`rank_chart`** — DB access for `player_rank_log`/`player_daily_dps`, and the three Matplotlib renderers:
+  ```
+  async resolve_days_in_month(conn, region, mode, season_id) → int
+      # thin wrapper over season_id.resolve_season_month (ldb_refresh_log-derived —
+      # works even for a player with zero data that season, unlike the old
+      # implementation which derived the month from the player's own rows)
+  async fetch_rank_log_points(conn, battletag, region, mode, season_id)
+      → List[(timestamp, rank)]                            # whole season, raw, no aggregation
+  async fetch_season_legend_counts(conn, battletag, region, mode, season_id, days_in_month)
+      → (days, legend_counts)
+  async fetch_today_series(conn, battletag, region, mode, season_id)
+      → (times: List[datetime], ranks: List[int])          # today only, raw, no aggregation
+  async fetch_today_legend_count(conn, battletag, region, mode, season_id) → int | None
 
-render_season_chart(battletag, region, mode, season_id, rank_type, days, ranks, legend_counts) → BytesIO
-render_today_chart(battletag, region, mode, season_id, times, ranks, legend_count) → BytesIO
-render_candlestick_chart(battletag, region, mode, season_id, candles) → BytesIO
-```
-
-- Season series aggregates `player_rank_log` per day: **Best** = `MIN(rank)` that day, **Last** = most recent observation that day. Days with no data are left as gaps (Matplotlib skips `None`/`NaN` points rather than connecting across them).
-- The command resolves `season_id` first via `bot.services.season_id.resolve_season_id_by_arg`/`parse_season_arg` (current / previous / explicit — same "previous = current − 1" convention `/glb` uses, factored out so `/rankchart` and `/rcc` share one implementation), then calls `resolve_days_in_month` so the x-axis always spans the correct month for whichever season was requested.
+  render_season_chart(battletag, region, mode, season_id, rank_type, days, positions, mapper, legend_counts) → BytesIO
+  render_today_chart(battletag, region, mode, season_id, times, positions, mapper, legend_count) → BytesIO
+  render_candlestick_chart(battletag, region, mode, season_id, candles, mapper) → BytesIO
+  ```
+  `positions`/`candles` values are `AxisMapper` `[0,1]` floats, not raw ranks — the command layer (`rank_commands.py`) fetches both sources, calls `rank_tracker_data.merge_with_rank_log`, builds one `AxisMapper` from the *entire* merged stream (so its single-/mixed-regime scaling reflects the whole chart, not one day), and only then aggregates/renders.
+- Season series "Best"/"Last" now read `DayOHLC.low`/`.close` from `aggregate_by_day` (position-space) instead of `MIN(rank)`/most-recent-observation SQL aggregates — same semantics (`low` = best/lowest position that day, `close` = last chronologically), just computed post-merge so a day mixing sources is still handled correctly. Days with no data are left as gaps (Matplotlib skips `None`/`NaN` points rather than connecting across them).
+- The command resolves `season_id` first via `bot.services.season_id.resolve_season_id_by_arg`/`parse_season_arg` (current / previous / explicit — same "previous = current − 1" convention `/glb` uses), then `resolve_season_month_range` (also in `season_id.py`) for the `(month_start, next_month_start, days_in_month)` needed by both `resolve_days_in_month`'s day count and `rank_tracker_matches`'s `TIMESTAMPTZ` range filter.
 - Legend-player count is rendered as a **filled area** (`ax.fill_between`), not a line, on a secondary axis — visually reads as "how deep into the legend pool this rank sits" rather than a second trend line. `twinx()` draws that secondary axis above the first by default, so both renderers explicitly flip z-order (`ax1.set_zorder(ax2.get_zorder() + 1)`, `ax1.patch.set_visible(False)`) to keep the rank line on top.
 - Colors and opacity are **developer-configurable module constants** at the top of `rank_chart.py` (not Discord command options): `RANK_LINE_COLOR`, `LEGEND_AREA_COLOR`, `AXIS_COLOR`, `BACKGROUND_COLOR`, and the candlestick `BULLISH_COLOR`/`BEARISH_COLOR`/`DOJI_COLOR` (hex strings), each paired with a `*_TRANSPARENCY` integer percentage (0–100). `_rgba()` converts a hex+percent pair into an RGBA color; `_style_axes()` applies `BACKGROUND_COLOR`/`AXIS_COLOR` to the figure, axes, ticks, and spines of all three renderers.
-- Rank axis is inverted (rank 1 at the top) and scaled to `[min, max]` of the player's own data ± ~15% padding — this is what makes the same chart work for a top-50 Standard climber and a top-8000 Wild grinder. (`set_ylim` must be called *before* `invert_yaxis()` — the reverse order silently resets the axis to non-inverted.)
-- Legend-player count (`player_daily_dps.legend_count`) is drawn semi-transparent on a secondary axis (`ax.twinx()`) so it can't distort the rank axis's dynamic scaling.
-- `fetch_season_candles` groups raw `player_rank_log` rows by day (`itertools.groupby`, already ordered by day/`observed_at` in SQL): `open`/`close` are the first/last rank observed that day, `low`/`high` are that day's best/worst rank. Days with zero observations simply have no entry — `render_candlestick_chart` plots candles at consecutive integer x-positions labeled with their real day-of-month, so the x-axis never shows empty days. A candle is colored bullish (green) when the closing rank is numerically lower (better) than the opening rank, bearish (red) when higher (worse), or a neutral doji gray when unchanged — note this is inverted from standard OHLC price convention, since for rank a smaller number is the "improvement".
+- Rank axis is inverted (best at the top) and fixed to `[0, 1]` — the *scaling* (what data range that fixed axis represents) now happens once, upstream, in `AxisMapper`, rather than per-render from raw values. (`set_ylim` must be called *before* `invert_yaxis()` — the reverse order silently resets the axis to non-inverted.) Y-tick labels come from `mapper.formatter()`, not raw numbers.
+- Legend-player count (`player_daily_dps.legend_count`) is drawn semi-transparent on a secondary axis (`ax.twinx()`) so it can't distort the rank axis's scaling.
+- `aggregate_by_day` groups the merged (`player_rank_log` ∪ `rank_tracker_matches`) stream by UTC day: `open`/`close` are the first/last position that day, `low`/`high` are that day's best/worst position. Days with zero observations simply have no entry — `render_candlestick_chart` plots candles at consecutive integer x-positions labeled with their real day-of-month, so the x-axis never shows empty days. A candle is colored bullish (green) when the closing position is numerically lower (better) than the opening position, bearish (red) when higher (worse), or a neutral doji gray when unchanged — the position-space "lower is better" convention preserves this coloring logic unchanged from before the Bronze-Diamond merge, including on a day that crosses from sub-Legend into Legend. The minimum candle body height (`_CANDLE_MIN_BODY_HEIGHT`) is a fixed fraction of the `[0,1]` axis rather than derived from the data's raw range, so bodies stay visually proportionate whether a day was Legend, sub-Legend, or both.
+- **Deploy-ordering guard**: `rank_commands._fetch_tracker_points_safe` catches `asyncpg.exceptions.UndefinedColumnError` around the `rank_tracker_matches.region`-filtered query and degrades to leaderboard-only data (logged warning) — the `bot` and `rank-api` containers start in parallel (`docker-compose.yml` has no `depends_on` between them), so the bot can briefly query the `region` column before decktrackerAPI's own migration has created it.
 
 ---
 
@@ -570,27 +582,28 @@ Looks up the user's rank in `ldb_current_entries`.
 
 ### `/rankchart <mode> <region> [season] [timeframe] [rank_type]`
 
-Renders a rank-progress line chart from `player_rank_log` via the `rank_chart` service and attaches it as a PNG.
+Renders a rank-progress line chart — Bronze→Diamond and Legend combined — merging `player_rank_log` (leaderboard scrape, Legend-only) with `rank_tracker_matches` (HDT RankTracker plugin uploads, all leagues) via `rank_tracker_data`/`rank_scale`, and attaches it as a PNG.
 
-- `mode` (required): Standard or Wild — the only two modes tracked in `player_rank_log`
+- `mode` (required): Standard or Wild — the only two modes tracked in `player_rank_log`/warmed by the leaderboard scrape; `rank_tracker_matches` is filtered to match even though it technically has data for other formats too, to keep this consistent with the Legend side
 - `region` (required): EU / US / AP — one line per chart, so no "all regions" fan-out like `/rank`
 - `season` (default **current**): free-text — `current`, `previous` (current season's id − 1), or an explicit season number (e.g. `150`); invalid non-numeric values are rejected with an ephemeral error before the chart is generated
-- `timeframe` (default **Season**): Season → x-axis is season day 1..days-in-month (the month is derived from that season's own data via `rank_chart.resolve_days_in_month`, not assumed to be the current month — same approach `/glb` uses for its previous-season view); Today → x-axis is time-of-day
-- `rank_type` (default **Last**): for Season only — Last (most recent rank observed each day) or Best (lowest rank observed each day); ignored for Today, which always plots every raw observation
+- `timeframe` (default **Season**): Season → x-axis is season day 1..days-in-month (the month is derived from `season_id.resolve_season_month_range`, not assumed to be the current month — same approach `/glb` uses for its previous-season view); Today → x-axis is time-of-day
+- `rank_type` (default **Last**): for Season only — Last (`DayOHLC.close`, most recent position observed each day) or Best (`DayOHLC.low`, best position observed each day); ignored for Today, which always plots every raw observation
+- If the player hasn't reached Legend that season, the y-axis scales tightly to just their observed Bronze-Diamond range; if they have (or the chart spans a season that both climbed and reached Legend), the axis splits into a Legend band and a Bronze-Diamond band — see `AxisMapper` above
 - Legend-player count is overlaid semi-transparently on a secondary axis
-- Errors mirror `/rank`: unregistered region → "register with `/rankset` first"; no data yet → friendly message instead of a blank/broken image (this is also what happens if you combine a non-current `season` with `timeframe=Today`, since past seasons have no data dated "today")
+- Errors mirror `/rank`: unregistered region → "register with `/rankset` first"; no data yet (from *either* source, merged) → friendly message instead of a blank/broken image (this is also what happens if you combine a non-current `season` with `timeframe=Today`, since past seasons have no data dated "today")
 
 ---
 
 ### `/rcc <mode> <region> [season]`
 
-Renders a daily rank candlestick chart from `player_rank_log` via `rank_chart.fetch_season_candles`/`render_candlestick_chart` and attaches it as a PNG.
+Renders a daily rank candlestick chart — Bronze→Diamond and Legend combined, same merge as `/rankchart` — via `rank_tracker_data.aggregate_by_day`/`rank_chart.render_candlestick_chart` and attaches it as a PNG.
 
-- `mode`/`region` (required), `season` (default **current**): same semantics as `/rankchart` (shared via `bot.services.season_id.parse_season_arg`/`resolve_season_id_by_arg`)
-- One candle per day the player has data — days with zero observations are simply absent, so the x-axis never shows an empty gap; each candle is still labeled with its real day-of-month
-- Body spans that day's opening (first observed) and closing (last observed) rank; wick spans that day's best (lowest) and worst (highest) rank
-- Candle color: green if the closing rank improved on the opening rank, red if it worsened, gray for no change (a deliberate inversion of standard OHLC convention, since a lower rank number is the improvement)
-- Same dark-theme color/background config and inverted dynamic rank axis as `/rankchart`
+- `mode`/`region` (required), `season` (default **current**): same semantics as `/rankchart` (shared via `bot.services.season_id.parse_season_arg`/`resolve_season_id_by_arg`/`resolve_season_month_range`)
+- One candle per day the player has data (from either source) — days with zero observations are simply absent, so the x-axis never shows an empty gap; each candle is still labeled with its real day-of-month
+- Body spans that day's opening (first chronological) and closing (last chronological) position; wick spans that day's best and worst position
+- Candle color: green if the closing position improved on the opening position, red if it worsened, gray for no change (a deliberate inversion of standard OHLC convention, since a lower position number is the improvement) — this coloring is unchanged by the Bronze-Diamond merge, including on the day a player first reaches Legend mid-day
+- Same dark-theme color/background config and inverted `[0,1]` position axis as `/rankchart`
 - Errors mirror `/rankchart`: unregistered region / no leaderboard data yet / no rank data this season
 
 ---
@@ -805,6 +818,16 @@ services:
 - [x] **T-37** — Implement `rank_chart.py`: season (best/last per day) and today (raw) series queries against `player_rank_log`, plus legend-count overlay from `player_daily_dps`
 - [x] **T-38** — Render PNG line charts with Matplotlib: inverted/dynamically-scaled rank axis, gap handling for missing days, secondary-axis legend-count overlay
 - [x] **T-39** — Implement `/rankchart` command (mode/region/timeframe/rank_type params)
+
+### Phase 13-17 — Bronze→Diamond rank progression in `/rankchart` and `/rcc` ✅
+
+Extends `/rankchart`/`/rcc` beyond Legend-only data using `rank_tracker_matches` (per-match HDT RankTracker plugin uploads, all leagues) merged with the existing leaderboard-scrape data. `/rank` was intentionally left untouched. Full task breakdown, design rationale (including two rejected approaches — a flat additive axis offset, and day-level rather than point-level source merging), and per-task verification notes: see `ToDo.MD` (T-41 through T-57).
+
+- [x] **T-41–43** — `decktrackerAPI`: additive `region TEXT` column + index on `rank_tracker_matches`; `MatchUpload.region` (optional, normalized, backward-compatible)
+- [x] **T-44–45** — `season_id.resolve_season_month`/`resolve_season_month_range`: season→calendar-month resolution from the global `ldb_refresh_log`, independent of any specific player's data
+- [x] **T-46–50** — `rank_scale.py`: `league_label`, monotonic `climb_score`, `classify`/`RankPoint`, dual-band `AxisMapper` — pure, unit-tested (`tests/test_rank_scale.py`)
+- [x] **T-51–53** — `rank_tracker_data.py`: `fetch_tracker_points`, true chronological `merge_with_rank_log`, position-space `aggregate_by_day` — unit-tested (`tests/test_rank_tracker_data.py`)
+- [x] **T-54–57** — Wired into `render_season_chart`/`render_today_chart`/`render_candlestick_chart` and `rank_commands.rankchart`/`rcc`, with a deploy-ordering guard (`_fetch_tracker_points_safe`) for the `bot`/`rank-api` parallel-startup race
 
 ---
 
