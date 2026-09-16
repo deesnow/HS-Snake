@@ -6,7 +6,7 @@ import logging
 
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 
 from bot.services.hs_json_client import HSJsonClient
 
@@ -19,6 +19,34 @@ class CardCommands(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
         self.hs_client = HSJsonClient()
+
+    async def cog_load(self) -> None:
+        self._card_refresh.start()
+
+    async def cog_unload(self) -> None:
+        self._card_refresh.cancel()
+
+    @tasks.loop(hours=24)
+    async def _card_refresh(self) -> None:
+        """Keep the card DB current without requiring a bot restart.
+
+        The first iteration just loads (respecting the on-disk 24h cache, so
+        repeated restarts within a day don't hammer HearthstoneJSON); every
+        iteration after that forces a fresh fetch so new cards/patches show
+        up automatically once a day.
+        """
+        try:
+            if self._card_refresh.current_loop == 0:
+                await self.hs_client.ensure_loaded()
+            else:
+                await self.hs_client.reload()
+            log.info("Card database refresh complete")
+        except Exception:
+            log.exception("Card database refresh failed")
+
+    @_card_refresh.before_loop
+    async def _before_card_refresh(self) -> None:
+        await self.bot.wait_until_ready()
 
     @app_commands.command(name="card", description="Show the card picture for a Hearthstone card.")
     @app_commands.describe(name="Card name to search for")

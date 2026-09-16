@@ -105,15 +105,27 @@ class HSJsonClient:
 
     async def ensure_loaded(self) -> None:
         """Load the card DB once per process; uses a disk cache valid for 24 h."""
+        await self._load(force=False)
+
+    async def reload(self) -> None:
+        """Force a fresh fetch from HearthstoneJSON, replacing the in-memory DB.
+
+        Bypasses the disk-cache TTL so it always hits the network — used by
+        the daily background refresh and the manual /botadmin reloadcards
+        command to pick up new cards without a process restart.
+        """
+        await self._load(force=True)
+
+    async def _load(self, force: bool) -> None:
         global _card_db, _all_cards_db, _name_index, _fabled_companions_by_card_id, _companion_dbf_ids
         async with _db_lock:
-            if _card_db:
+            if _card_db and not force:
                 return
 
             raw_cards: Optional[list[dict]] = None
 
-            # Try disk cache first
-            if _CACHE_FILE.exists():
+            # Try disk cache first (skipped entirely on a forced reload)
+            if not force and _CACHE_FILE.exists():
                 age = time.time() - _CACHE_FILE.stat().st_mtime
                 if age < _CACHE_TTL_SECONDS:
                     log.info("Loading card database from disk cache (age %.0f s)…", age)
@@ -132,6 +144,12 @@ class HSJsonClient:
                 _CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
                 _CACHE_FILE.write_text(json.dumps(raw_cards), encoding="utf-8")
                 log.info("Card database saved to disk cache: %s", _CACHE_FILE)
+
+            _card_db.clear()
+            _all_cards_db.clear()
+            _name_index.clear()
+            _fabled_companions_by_card_id.clear()
+            _companion_dbf_ids.clear()
 
             for raw in raw_cards:
                 any_card = _build_card_info(raw)
