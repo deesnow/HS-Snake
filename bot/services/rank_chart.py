@@ -160,8 +160,10 @@ async def fetch_today_legend_count(conn, battletag, region, mode, season_id):
 
 def render_season_chart(battletag, region, mode, season_id, rank_type, days, positions, mapper, legend_counts):
     """
-    `positions` are AxisMapper [0,1] values (one per day 1..len(days), None for
-    days with no data), not raw ranks — see rank_tracker_data.aggregate_by_day.
+    `positions` are AxisMapper [0,1] values (one per day 1..len(days)), not raw
+    ranks — see rank_tracker_data.aggregate_by_day. Days with no observation
+    carry the last known value forward (rank_commands.rankchart) so the line
+    stays continuous; only days before the first observation are None.
     `mapper` supplies the tick-label formatter (raw position -> "Legend #123" /
     "Platinum 5").
     """

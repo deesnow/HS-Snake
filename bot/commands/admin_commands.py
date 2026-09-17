@@ -11,6 +11,7 @@ from discord import app_commands
 from discord.ext import commands
 
 import bot.services.guild_settings as gs
+from bot.services.hs_json_client import HSJsonClient
 
 log = logging.getLogger(__name__)
 
@@ -136,6 +137,23 @@ class AdminCommands(commands.Cog):
         embed.add_field(name="Auto-Detect",        value=detect_state,  inline=True)
         embed.add_field(name="Monitored Channels", value=scope,         inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    # ── /botadmin reloadcards ─────────────────────────────────────────
+
+    @admin.command(name="reloadcards", description="Force-refresh the Hearthstone card database now.")
+    async def reloadcards(self, interaction: discord.Interaction) -> None:
+        cfg = await gs.load(interaction.guild_id)
+        if not _is_admin(interaction, cfg):
+            await interaction.response.send_message("❌ You don't have permission to do this.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        try:
+            await HSJsonClient().reload()
+            await interaction.followup.send("✅ Card database reloaded.", ephemeral=True)
+        except Exception:
+            log.exception("Manual card reload failed")
+            await interaction.followup.send("❌ Failed to reload card database — check logs.", ephemeral=True)
 
 
 async def setup(bot: commands.Bot) -> None:
