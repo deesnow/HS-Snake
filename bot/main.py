@@ -5,6 +5,7 @@ Loads all command cogs and connects to Discord.
 """
 import asyncio
 import logging
+import logging.handlers
 import os
 
 import discord
@@ -18,7 +19,14 @@ _log_handlers: list[logging.Handler] = [logging.StreamHandler()]
 if settings.log_file:
     import os as _os
     _os.makedirs(_os.path.dirname(settings.log_file), exist_ok=True)
-    _log_handlers.append(logging.FileHandler(settings.log_file, encoding="utf-8"))
+    _log_handlers.append(
+        logging.handlers.RotatingFileHandler(
+            settings.log_file,
+            maxBytes=settings.log_max_bytes,
+            backupCount=settings.log_backup_count,
+            encoding="utf-8",
+        )
+    )
 
 logging.basicConfig(
     level=settings.log_level,
