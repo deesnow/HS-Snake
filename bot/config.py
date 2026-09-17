@@ -36,6 +36,12 @@ class Settings:
     log_file: Optional[str] = field(
         default_factory=lambda: os.getenv("LOG_FILE")
     )
+    log_max_bytes: int = field(
+        default_factory=lambda: int(os.getenv("LOG_MAX_BYTES", "5000000"))
+    )
+    log_backup_count: int = field(
+        default_factory=lambda: int(os.getenv("LOG_BACKUP_COUNT", "5"))
+    )
 
 
 settings = Settings()
