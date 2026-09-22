@@ -177,11 +177,12 @@ Remove these two lines (nothing under `www/` needs to stay untracked — no buil
 
 Single scrolling page, semantic HTML5. Structure, reusing README wording verbatim where it already exists:
 
-- **Hero**: "HS-Snake" + one-line pitch ("A Discord bot for Hearthstone: decode deck codes, visualise decks, search cards, look up legend ranks, and auto-detect deck codes posted anywhere in your server."), primary CTA button linking to the invite URL (`https://discord.com/oauth2/authorize?client_id=1484526968929255547&permissions=379968&integration_type=0&scope=bot+applications.commands`).
+- **Hero**: "Jeeves" (the bot's actual Discord name — the project/repo is called HS-Snake, but the page uses "Jeeves" throughout to avoid confusing visitors) + one-line pitch ("A Discord bot for Hearthstone: decode deck codes, visualise decks, search cards, look up legend ranks, and auto-detect deck codes posted anywhere in your server."), primary CTA button linking to the invite URL (`https://discord.com/oauth2/authorize?client_id=1484526968929255547&permissions=379968&integration_type=0&scope=bot+applications.commands`).
 - **Deck Commands** — `/deck`, `/deckanalyze`, `/deckimage`, each with its screenshot.
 - **Card Commands** — `/card`, `/cardsearch`, each with its screenshot.
 - **Legend Rank Commands** — `/rankset`, `/rankremove`, `/rank`, `/rankchart`, `/rcc` (the latter two are undocumented in README but present in code — include them; screenshots for `/rank`, `/rankchart`, `/rcc`).
 - **Guild Leaderboard** — `/glb` (undocumented in README, present in code), with screenshot.
+- **Fair Hearthstone Rank Score (FHRS)** — explains the DPS/Season Score model behind `/glb`, sourced from `fair_hearthstone_rank_score_fhrs.md`; formulas rendered as plain monospace text (no MathJax/KaTeX dependency).
 - **HDT Token** — `/hdttoken` (undocumented in README, present in code), no screenshot (secret DM output).
 - **Admin Commands** (`/botadmin ...`) — intro noting the permission requirement, all 7 subcommands listed, screenshot only for `status`.
 - **Auto-Detect** — passive feature, not a slash command; styled as a distinct callout, description only (no screenshot).

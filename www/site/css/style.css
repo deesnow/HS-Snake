@@ -213,6 +213,49 @@ h1, h2, h3 {
   max-width: 640px;
 }
 
+/* ── FHRS formula blocks ─────────────────────────────────────────── */
+
+.fhrs-block {
+  max-width: 720px;
+  padding: 20px 0;
+  border-top: 1px solid var(--border);
+}
+
+.fhrs-block:first-of-type {
+  border-top: none;
+}
+
+.fhrs-block h3 {
+  font-size: 1.05rem;
+  color: var(--text);
+}
+
+.fhrs-block p,
+.fhrs-block li {
+  color: var(--text-muted);
+}
+
+.fhrs-block ul {
+  margin: 0;
+  padding-left: 1.2em;
+}
+
+.fhrs-block li + li {
+  margin-top: 6px;
+}
+
+.formula {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--gold-bright);
+  padding: 14px 18px;
+  margin: 14px 0;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
 .cmd-card {
   display: grid;
   grid-template-columns: 1fr 1fr;

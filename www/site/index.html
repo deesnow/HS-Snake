@@ -190,11 +190,62 @@
           <p>
             Show a leaderboard of ranked season scores filtered to members of your Discord
             server. Choose how many results to show (10 / 20 / All) and the current or
-            previous season.
+            previous season. Scores are computed with the
+            <a href="#fhrs">Fair Hearthstone Rank Score</a> model, below.
           </p>
         </div>
         <img class="cmd-shot" src="/img/screenshots/glb-example.png" alt="Example output of the /glb command" loading="lazy">
       </article>
+    </div>
+  </section>
+
+  <section id="fhrs" class="cmd-section">
+    <div class="wrap">
+      <h2>Fair Hearthstone Rank Score (FHRS)</h2>
+      <p class="section-intro">
+        The scoring model behind the Guild Leaderboard. It balances daily peaks, field
+        density, and consistency, so the result reflects season-long performance rather
+        than a single lucky day.
+      </p>
+
+      <div class="fhrs-block">
+        <h3>1. Daily Performance Score (DPS)</h3>
+        <p>
+          At the end of each day, the system records your highest rank achieved
+          (<code>R</code>) and the total number of Legend players
+          (<code>N</code>) in your region.
+        </p>
+        <pre class="formula">DPS = log10(N) &times; ((N &minus; R + 1) / N) &times; 100</pre>
+        <ul>
+          <li><strong>log10(N)</strong> — the inflation factor: accounts for field density, since a Top 10 finish against 20,000 players requires far more than against 30 players.</li>
+          <li><strong>(N &minus; R + 1) / N</strong> — your percentile standing within the current Legend pool.</li>
+          <li><strong>&times; 100</strong> — scales the fraction into a human-friendly integer score.</li>
+        </ul>
+      </div>
+
+      <div class="fhrs-block">
+        <h3>2. Season Score</h3>
+        <p>
+          The final Season Score is the cumulative average of daily scores, divided
+          strictly by the elapsed days of the season — so early grinders and late-month
+          entrants are compared fairly.
+        </p>
+        <pre class="formula">Season Score = (DPS&#8321; + DPS&#8322; + &hellip; + DPS&#8345;) / n</pre>
+        <p>
+          <code>n</code> is the current day of the season. Entering Legend mid-season
+          scores 0 for the days before entry, lowering the seasonal average and rewarding
+          sustained competition over the whole month.
+        </p>
+      </div>
+
+      <div class="fhrs-block">
+        <h3>Why it's fair</h3>
+        <ul>
+          <li><strong>Anti-camping</strong> — hitting an early high rank and stopping lets your relative score degrade as the field grows.</li>
+          <li><strong>Consistency-weighted</strong> — drastic rank drop-offs lower your daily average, favoring stable top-tier performance.</li>
+          <li><strong>Self-scaling</strong> — automatically adjusts for regional player-pool growth across the season.</li>
+        </ul>
+      </div>
     </div>
   </section>
 
