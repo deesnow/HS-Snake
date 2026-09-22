@@ -1,0 +1,302 @@
+:root {
+  --bg: #130f1e;
+  --bg-alt: #1a1530;
+  --surface: #211a3a;
+  --border: rgba(217, 183, 107, 0.22);
+  --gold: #d9b76b;
+  --gold-bright: #f0cf8c;
+  --text: #ece7d8;
+  --text-muted: #a89f8c;
+  --radius: 10px;
+  --max-width: 960px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  line-height: 1.55;
+}
+
+.wrap {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 0 20px;
+}
+
+a {
+  color: var(--gold-bright);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+code {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  background: rgba(217, 183, 107, 0.12);
+  color: var(--gold-bright);
+  padding: 0.15em 0.45em;
+  border-radius: 4px;
+  font-size: 0.92em;
+}
+
+img {
+  max-width: 100%;
+  display: block;
+}
+
+h1, h2, h3 {
+  line-height: 1.2;
+  margin: 0 0 0.5em;
+}
+
+/* ── Top bar ─────────────────────────────────────────────────────── */
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: rgba(19, 15, 30, 0.92);
+  backdrop-filter: blur(6px);
+  border-bottom: 1px solid var(--border);
+}
+
+.topbar-inner {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 1.1rem;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.brand:hover {
+  text-decoration: none;
+  color: var(--gold-bright);
+}
+
+.brand-logo {
+  border-radius: 6px;
+}
+
+.topnav {
+  display: flex;
+  gap: 18px;
+  flex: 1;
+  overflow-x: auto;
+}
+
+.topnav a {
+  color: var(--text-muted);
+  font-size: 0.92rem;
+  white-space: nowrap;
+}
+
+.topnav a:hover {
+  color: var(--gold-bright);
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────── */
+
+.btn {
+  display: inline-block;
+  border-radius: 8px;
+  padding: 12px 22px;
+  font-weight: 600;
+  font-size: 0.98rem;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.btn:hover {
+  text-decoration: none;
+}
+
+.btn-primary {
+  background: linear-gradient(180deg, var(--gold-bright), var(--gold));
+  color: #1a1508;
+}
+
+.btn-primary:hover {
+  filter: brightness(1.08);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.btn-ghost:hover {
+  border-color: var(--gold);
+  color: var(--gold-bright);
+}
+
+.btn-small {
+  padding: 8px 14px;
+  font-size: 0.88rem;
+  white-space: nowrap;
+}
+
+/* ── Hero ────────────────────────────────────────────────────────── */
+
+.hero {
+  padding: 72px 0 56px;
+  text-align: center;
+  background:
+    radial-gradient(circle at 50% -10%, rgba(217, 183, 107, 0.12), transparent 60%),
+    var(--bg);
+}
+
+.hero h1 {
+  font-size: clamp(2.2rem, 5vw, 3.2rem);
+  background: linear-gradient(180deg, var(--gold-bright), var(--gold));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.pitch {
+  max-width: 640px;
+  margin: 0 auto 32px;
+  color: var(--text-muted);
+  font-size: 1.08rem;
+}
+
+.hero-actions {
+  display: flex;
+  gap: 14px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+/* ── Command sections ────────────────────────────────────────────── */
+
+.cmd-section {
+  padding: 56px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.cmd-section.alt {
+  background: var(--bg-alt);
+}
+
+.cmd-section h2,
+.callout h2 {
+  font-size: 1.6rem;
+  color: var(--gold-bright);
+}
+
+.section-intro {
+  color: var(--text-muted);
+  margin-bottom: 28px;
+  max-width: 640px;
+}
+
+.cmd-card {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 28px;
+  align-items: center;
+  padding: 22px 0;
+  border-top: 1px solid var(--border);
+}
+
+.cmd-card:first-of-type {
+  border-top: none;
+}
+
+.cmd-card-text-only {
+  grid-template-columns: 1fr;
+}
+
+.cmd-text h3 {
+  font-size: 1.05rem;
+  margin-bottom: 10px;
+}
+
+.cmd-text p {
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.cmd-shot {
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.cmd-shots {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+@media (max-width: 720px) {
+  .cmd-card {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Auto-detect callout ─────────────────────────────────────────── */
+
+.callout {
+  padding: 56px 0;
+  background: var(--bg-alt);
+  border-bottom: 1px solid var(--border);
+}
+
+.callout p {
+  max-width: 720px;
+  color: var(--text-muted);
+  margin-bottom: 24px;
+}
+
+.callout .cmd-shot {
+  max-width: 640px;
+}
+
+/* ── CTA band ─────────────────────────────────────────────────────── */
+
+.cta-band {
+  padding: 64px 0;
+  text-align: center;
+}
+
+.cta-band h2 {
+  font-size: 1.6rem;
+  margin-bottom: 24px;
+}
+
+/* ── Footer ──────────────────────────────────────────────────────── */
+
+.site-footer {
+  padding: 32px 0 48px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+}
+
+.site-footer p {
+  margin: 0 0 8px;
+}

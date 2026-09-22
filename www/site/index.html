@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jeeves — Hearthstone Discord Bot</title>
+<meta name="description" content="A Discord bot for Hearthstone: decode deck codes, visualise decks, search cards, look up legend ranks, and auto-detect deck codes posted anywhere in your server.">
+
+<meta property="og:title" content="Jeeves — Hearthstone Discord Bot">
+<meta property="og:description" content="Decode deck codes, visualise decks, search cards, track legend rank, and auto-detect deck codes posted in chat.">
+<meta property="og:type" content="website">
+<meta property="og:image" content="/img/Jeeves.png">
+
+<link rel="icon" type="image/png" href="/img/favicon.png">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="wrap topbar-inner">
+    <a class="brand" href="#top">
+      <img src="/img/Jeeves.png" alt="Jeeves" class="brand-logo" width="28" height="28">
+      Jeeves
+    </a>
+    <nav class="topnav">
+      <a href="#deck-commands">Deck</a>
+      <a href="#card-commands">Cards</a>
+      <a href="#rank-commands">Rank</a>
+      <a href="#admin-commands">Admin</a>
+      <a href="https://github.com/deesnow/HS-Snake">GitHub</a>
+    </nav>
+    <a class="btn btn-primary btn-small" id="invite-top"
+       href="https://discord.com/oauth2/authorize?client_id=1484526968929255547&permissions=379968&integration_type=0&scope=bot+applications.commands">
+      Add to Discord
+    </a>
+  </div>
+</header>
+
+<main id="top">
+
+  <section class="hero">
+    <div class="wrap hero-inner">
+      <h1>Jeeves</h1>
+      <p class="pitch">
+        A Discord bot for Hearthstone: decode deck codes, visualise decks, search cards,
+        look up legend ranks, and auto-detect deck codes posted anywhere in your server.
+      </p>
+      <div class="hero-actions">
+        <a class="btn btn-primary" id="invite-hero"
+           href="https://discord.com/oauth2/authorize?client_id=1484526968929255547&permissions=379968&integration_type=0&scope=bot+applications.commands">
+          ➕ Add Jeeves to your server
+        </a>
+        <button class="btn btn-ghost" id="copy-invite" type="button" data-copy-target="invite-hero">
+          Copy invite link
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <section id="deck-commands" class="cmd-section">
+    <div class="wrap">
+      <h2>Deck Commands</h2>
+      <p class="section-intro">Decode, analyse, and visualise any Hearthstone deck code.</p>
+
+      <article class="cmd-card">
+        <div class="cmd-text">
+          <h3><code>/deck &lt;code&gt;</code></h3>
+          <p>
+            Decode a deck code and display a card list with rarity icons, mana cost, format
+            label, and total dust cost. Decks containing <strong>E.T.C. Band Manager</strong>
+            or <strong>King of the Underbelly</strong> show their sideboard cards in a
+            separate section.
+          </p>
+        </div>
+        <img class="cmd-shot" src="/img/screenshots/deck-example.png" alt="Example output of the /deck command" loading="lazy">
+      </article>
+
+      <article class="cmd-card">
+        <div class="cmd-text">
+          <h3><code>/deckanalyze &lt;code&gt;</code></h3>
+          <p>
+            Detailed grouped analysis: cards split by type (Minions, Spells, Weapons,
+            Locations, Heroes), subtype/tribe info, a mana curve bar chart, and dedicated
+            sideboard sections when present.
+          </p>
+        </div>
+        <img class="cmd-shot" src="/img/screenshots/deckanalyze-example.png" alt="Example output of the /deckanalyze command" loading="lazy">
+      </article>
+
+      <article class="cmd-card">
+        <div class="cmd-text">
+          <h3><code>/deckimage &lt;code&gt;</code></h3>
+          <p>
+            Render a visual image of the deck with card thumbnails. Sideboard cards are
+            included after the main deck cards.
+          </p>
+        </div>
+        <img class="cmd-shot" src="/img/screenshots/deckimage-example.png" alt="Example output of the /deckimage command" loading="lazy">
+      </article>
+    </div>
+  </section>
+
+  <section id="card-commands" class="cmd-section alt">
+    <div class="wrap">
+      <h2>Card Commands</h2>
+      <p class="section-intro">Look up any Hearthstone card by name.</p>
+
+      <article class="cmd-card">
+        <div class="cmd-text">
+          <h3><code>/card &lt;name&gt;</code></h3>
+          <p>Look up a single card by name and display its full card image.</p>
+        </div>
+        <img class="cmd-shot" src="/img/screenshots/card-example.png" alt="Example output of the /card command" loading="lazy">
+      </article>
+
+      <article class="cmd-card">
+        <div class="cmd-text">
+          <h3><code>/cardsearch [name]</code></h3>
+          <p>
+            Interactive card search with dropdown filters for Mana Cost, Class, and Card
+            Type; paginated results (10 per page, up to 100); click any result to view its
+            card image.
+          </p>
+        </div>
+        <div class="cmd-shots">
+          <img class="cmd-shot" src="/img/screenshots/cardsearch-filters-example.png" alt="The /cardsearch filter dropdowns for Mana Cost, Class, and Card Type" loading="lazy">
+          <img class="cmd-shot" src="/img/screenshots/cardsearch-results-example.png" alt="Paginated results from a /cardsearch search" loading="lazy">
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <section id="rank-commands" class="cmd-section">
+    <div class="wrap">
+      <h2>Legend Rank Commands</h2>
+      <p class="section-intro">Register your BattleTag and track your ranked ladder progress across EU, US, and AP.</p>
+
+      <article class="cmd-card cmd-card-text-only">
+        <div class="cmd-text">
+          <h3><code>/rankset &lt;battletag&gt;</code></h3>
+          <p>Register your BattleTag (<code>Name#1234</code>) for legend rank tracking across all three regions.</p>
+        </div>
+      </article>
+
+      <article class="cmd-card cmd-card-text-only">
+        <div class="cmd-text">
+          <h3><code>/rankremove &lt;region&gt;</code></h3>
+          <p>Remove your BattleTag registration for a region (EU / US / AP).</p>
+        </div>
+      </article>
+
+      <article class="cmd-card">
+        <div class="cmd-text">
+          <h3><code>/rank [mode] [region]</code></h3>
+          <p>
+            Show your current legend rank across all registered regions. Optional filters
+            for game mode (Standard, Wild, Classic, Battlegrounds, Battlegrounds Duo,
+            Arena, Twist) and region.
+          </p>
+        </div>
+        <img class="cmd-shot" src="/img/screenshots/rank-example.png" alt="Example output of the /rank command" loading="lazy">
+      </article>
+
+      <article class="cmd-card">
+        <div class="cmd-text">
+          <h3><code>/rankchart &lt;mode&gt; &lt;region&gt; [season] [timeframe] [rank_type]</code></h3>
+          <p>Render a line chart of your rank progress (Bronze through Diamond and Legend combined) over a season.</p>
+        </div>
+        <img class="cmd-shot" src="/img/screenshots/rankchart-example.png" alt="Example output of the /rankchart command" loading="lazy">
+      </article>
+
+      <article class="cmd-card">
+        <div class="cmd-text">
+          <h3><code>/rcc &lt;mode&gt; &lt;region&gt; [season]</code></h3>
+          <p>Render a daily rank candlestick chart showing your open/close/best/worst rank each day.</p>
+        </div>
+        <img class="cmd-shot" src="/img/screenshots/rcc-example.png" alt="Example output of the /rcc command" loading="lazy">
+      </article>
+    </div>
+  </section>
+
+  <section id="guild-leaderboard" class="cmd-section alt">
+    <div class="wrap">
+      <h2>Guild Leaderboard</h2>
+      <p class="section-intro">See how your server's members stack up against each other.</p>
+
+      <article class="cmd-card">
+        <div class="cmd-text">
+          <h3><code>/glb &lt;region&gt; &lt;mode&gt; &lt;top&gt; [season]</code></h3>
+          <p>
+            Show a leaderboard of ranked season scores filtered to members of your Discord
+            server. Choose how many results to show (10 / 20 / All) and the current or
+            previous season.
+          </p>
+        </div>
+        <img class="cmd-shot" src="/img/screenshots/glb-example.png" alt="Example output of the /glb command" loading="lazy">
+      </article>
+    </div>
+  </section>
+
+  <section id="hdt-token" class="cmd-section">
+    <div class="wrap">
+      <h2>HDT Token</h2>
+      <p class="section-intro">For use with the Hearthstone Deck Tracker RankTrackerPlugin.</p>
+
+      <article class="cmd-card cmd-card-text-only">
+        <div class="cmd-text">
+          <h3><code>/hdttoken</code></h3>
+          <p>
+            Generate a bearer token for the Hearthstone Deck Tracker RankTrackerPlugin,
+            delivered via DM. Regenerating a token invalidates the old one.
+          </p>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <section id="admin-commands" class="cmd-section alt">
+    <div class="wrap">
+      <h2>Admin Commands</h2>
+      <p class="section-intro">
+        Grouped under <code>/botadmin</code>. All subcommands require the configured admin
+        role, Administrator permission, or server ownership.
+      </p>
+
+      <article class="cmd-card cmd-card-text-only">
+        <div class="cmd-text">
+          <h3><code>/botadmin setrole &lt;role&gt;</code></h3>
+          <p>Set the role that is allowed to manage bot settings (requires Administrator permission).</p>
+        </div>
+      </article>
+
+      <article class="cmd-card cmd-card-text-only">
+        <div class="cmd-text">
+          <h3><code>/botadmin autodetect on|off</code></h3>
+          <p>Enable or disable automatic deck-code detection for this server.</p>
+        </div>
+      </article>
+
+      <article class="cmd-card cmd-card-text-only">
+        <div class="cmd-text">
+          <h3><code>/botadmin allchannels on|off</code></h3>
+          <p><code>on</code> — monitor every text channel. <code>off</code> — only channels on the watch list.</p>
+        </div>
+      </article>
+
+      <article class="cmd-card cmd-card-text-only">
+        <div class="cmd-text">
+          <h3><code>/botadmin addchannel &lt;channel&gt;</code></h3>
+          <p>Add a channel to the deck-detection watch list.</p>
+        </div>
+      </article>
+
+      <article class="cmd-card cmd-card-text-only">
+        <div class="cmd-text">
+          <h3><code>/botadmin removechannel &lt;channel&gt;</code></h3>
+          <p>Remove a channel from the deck-detection watch list.</p>
+        </div>
+      </article>
+
+      <article class="cmd-card">
+        <div class="cmd-text">
+          <h3><code>/botadmin status</code></h3>
+          <p>Show the current bot configuration (admin role, auto-detect state, monitored channels).</p>
+        </div>
+        <img class="cmd-shot" src="/img/screenshots/botadmin-status-example.png" alt="Example output of the /botadmin status command" loading="lazy">
+      </article>
+
+      <article class="cmd-card cmd-card-text-only">
+        <div class="cmd-text">
+          <h3><code>/botadmin reloadcards</code></h3>
+          <p>Force-refresh the Hearthstone card database on demand.</p>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <section id="auto-detect" class="callout">
+    <div class="wrap">
+      <h2>Auto-Detect</h2>
+      <p>
+        Jeeves can passively monitor channels for Hearthstone deck codes — no command
+        needed. When a deck code is posted in a watched channel, the bot replies with a
+        decoded deck image automatically. <strong>@mention + deck code</strong> always
+        triggers a reply, regardless of channel settings. Fully configurable per server via
+        the Admin Commands above.
+      </p>
+    </div>
+  </section>
+
+  <section class="cta-band">
+    <div class="wrap">
+      <h2>Ready to add Jeeves to your server?</h2>
+      <a class="btn btn-primary" id="invite-footer"
+         href="https://discord.com/oauth2/authorize?client_id=1484526968929255547&permissions=379968&integration_type=0&scope=bot+applications.commands">
+        ➕ Add Jeeves to your server
+      </a>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <p>
+      This project is not affiliated with or endorsed by Blizzard Entertainment.
+      Hearthstone and all related assets are property of Blizzard Entertainment.
+      Card images are sourced from
+      <a href="https://hearthstonejson.com">HearthstoneJSON</a>.
+    </p>
+    <p>
+      Licensed under the MIT License. ·
+      <a href="https://github.com/deesnow/HS-Snake">Source on GitHub</a>
+    </p>
+  </div>
+</footer>
+
+<script src="/js/main.js"></script>
+</body>
+</html>
