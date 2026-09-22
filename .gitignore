@@ -49,3 +49,6 @@ tests/export_hs_cards_to_excel.py
 ToDo.MD
 payload-definition.md
 .gitignore
+
+#Static website for bot
+www/
