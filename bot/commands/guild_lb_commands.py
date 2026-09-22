@@ -189,10 +189,13 @@ class GuildLbCommands(commands.Cog):
                     days_in_month = (next_month_start - datetime(year, month, 1)).days
 
         # ── Filter to guild members ───────────────────────────────────────────
-        guild_rows = [
-            row for row in rows
-            if guild.get_member(int(row["discord_id"])) is not None
-        ]
+        guild_rows = []
+        member_by_discord_id: dict[str, discord.Member] = {}
+        for row in rows:
+            member = guild.get_member(int(row["discord_id"]))
+            if member is not None:
+                guild_rows.append(row)
+                member_by_discord_id[row["discord_id"]] = member
 
         if not guild_rows:
             await interaction.followup.send(
@@ -219,6 +222,11 @@ class GuildLbCommands(commands.Cog):
 
         col_bt    = max(len(r["battletag"]) for r in guild_rows)
         col_bt    = max(col_bt, len("BattleTag"))
+        col_user  = max(
+            len(member_by_discord_id[r["discord_id"]].display_name)
+            for r in guild_rows
+        )
+        col_user  = max(col_user, len("Discord"))
         col_rank  = max(
             len(str(rank_by_battletag.get(r["battletag_key"], "-")))
             for r in guild_rows
@@ -227,15 +235,16 @@ class GuildLbCommands(commands.Cog):
         col_score = max(len(f"{r['season_score']:.0f}") for r in guild_rows)
         col_score = max(col_score, len("Score"))
 
-        sep   = f"{'---':<4}  {'-' * col_bt}  {'-' * col_rank}  {'-' * col_score}"
-        hdr   = f"{'#':<4}  {'BattleTag':<{col_bt}}  {'Rank':>{col_rank}}  {'Score':>{col_score}}"
+        sep   = f"{'---':<4}  {'-' * col_bt}  {'-' * col_user}  {'-' * col_rank}  {'-' * col_score}"
+        hdr   = f"{'#':<4}  {'BattleTag':<{col_bt}}  {'Discord':<{col_user}}  {'Rank':>{col_rank}}  {'Score':>{col_score}}"
 
         lines = [hdr, sep]
         for i, row in enumerate(guild_rows, start=1):
             score = f"{row['season_score']:.0f}"
             rank_value = rank_by_battletag.get(row["battletag_key"], "-")
+            username = member_by_discord_id[row["discord_id"]].display_name
             lines.append(
-                f"{f'{i}.':<4}  {row['battletag']:<{col_bt}}  {rank_value:>{col_rank}}  {score:>{col_score}}"
+                f"{f'{i}.':<4}  {row['battletag']:<{col_bt}}  {username:<{col_user}}  {rank_value:>{col_rank}}  {score:>{col_score}}"
             )
 
         table = "```\n" + "\n".join(lines) + "\n```"
