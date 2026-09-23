@@ -68,7 +68,21 @@ services:
       retries: 3
       start_period: 10s
 
-  # ── Cloudflare Tunnel (exposes rank-api publicly) ───────────────────
+  # ── Static promo website ─────────────────────────────────────────────
+  www:
+    image: ghcr.io/deesnow/hs-snake-www:${WWW_TAG:-latest}
+    pull_policy: always
+    restart: unless-stopped
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ── Cloudflare Tunnel (exposes rank-api and www publicly) ───────────
   cloudflared:
     image: cloudflare/cloudflared:latest
     command: tunnel --no-autoupdate run
@@ -77,6 +91,8 @@ services:
       TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
     depends_on:
       rank-api:
+        condition: service_healthy
+      www:
         condition: service_healthy
     restart: unless-stopped
     networks:
