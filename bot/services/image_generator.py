@@ -270,19 +270,16 @@ class ImageGenerator:
         label_default = _load_label(2)  # x2 — used for all 2-copy cards
 
         # ── Fetch all card images concurrently ────────────────────────
+        # Goes through HSJsonClient.get_card_image_bytes() so deck renders
+        # benefit from the same local Nginx cache as /card, instead of
+        # hitting HearthstoneJSON's upstream CDN fresh on every render.
         async def _fetch(entry: CardEntry) -> bytes | None:
             try:
-                card_id = entry.card.card_id
-                url = (
-                    f"https://art.hearthstonejson.com/v1/render/latest"
-                    f"/enUS/512x/{card_id}.png"
+                return await self._client.get_card_image_bytes(
+                    entry.card.card_id, entry.card.dbf_id, size="512x"
                 )
-                client = await self._client._client()
-                resp = await client.get(url)
-                resp.raise_for_status()
-                return resp.content
             except Exception:
-                log.debug("Image unavailable for %s", entry.card.card_id)
+                log.warning("Image unavailable for %s", entry.card.card_id)
                 return None
 
         image_data: list[bytes | None] = list(

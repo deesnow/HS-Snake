@@ -279,20 +279,26 @@ class HSJsonClient:
     # Card images
     # ------------------------------------------------------------------
 
-    async def get_card_image_bytes(self, card_id: str, dbf_id: int) -> bytes:
+    async def get_card_image_bytes(
+        self, card_id: str, dbf_id: int, size: Optional[str] = None
+    ) -> bytes:
         """
         Fetch card render PNG bytes.
 
         Tries the local Nginx cache first (CACHE_BASE_URL/cards/{card_id}.png).
         Falls back to the upstream HearthstoneJSON art endpoint.
+
+        *size* overrides settings.image_card_size (e.g. deck images need the
+        larger "512x" render regardless of the single-card lookup size).
         """
+        render_size = size or settings.image_card_size
         cache_url = (
             f"{settings.cache_base_url}/cards/"
-            f"{settings.hsjson_locale}/{settings.image_card_size}/{card_id}.png"
+            f"{settings.hsjson_locale}/{render_size}/{card_id}.png"
         )
         upstream_url = _HSJSON_ART_URL.format(
             locale=settings.hsjson_locale,
-            size=settings.image_card_size,
+            size=render_size,
             card_id=card_id,
         )
         client = await self._client()
