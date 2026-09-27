@@ -96,8 +96,8 @@ _LBL_DY_FRAC = 650 / 697   # ≈ 0.933  — label top near card bottom, pasted u
 
 # ── Row gap ───────────────────────────────────────────────────────────
 # The label protrudes ≈ 0.107 × card_h below the card bottom.
-# A gap of 0.13 × card_h ensures it is fully visible between rows.
-ROW_GAP_FRAC = 0.13
+# A gap of 0.11 × card_h keeps it fully visible with minimal slack.
+ROW_GAP_FRAC = 0.11
 
 # ── E.T.C. Band Manager dbfId ─────────────────────────────────────────
 # Sideboard cards are placed immediately after ETC in the grid and
@@ -128,6 +128,23 @@ def _fixed_crop(im: Image.Image) -> Image.Image:
     cells appear the same size regardless of frame shape."""
     w, h = im.size
     return im.crop((_CROP_L, _CROP_T, w - _CROP_R, h - _CROP_B))
+
+
+def _center_crop_to_ratio(im: Image.Image, ratio: float) -> Image.Image:
+    """Center-crop to a target height/width ratio.
+
+    Used for images fetched from the Blizzard API fallback, whose exact
+    frame padding (unlike HearthstoneJSON's renders) isn't known, so the
+    precise pixel crop from `_fixed_crop` can't be applied.
+    """
+    w, h = im.size
+    target_h = round(w * ratio)
+    if target_h <= h:
+        top = (h - target_h) // 2
+        return im.crop((0, top, w, top + target_h))
+    target_w = round(h / ratio)
+    left = (w - target_w) // 2
+    return im.crop((left, 0, left + target_w, h))
 
 
 def _calc_card_size(n: int) -> tuple[int, int, int]:
@@ -273,16 +290,21 @@ class ImageGenerator:
         # Goes through HSJsonClient.get_card_image_bytes() so deck renders
         # benefit from the same local Nginx cache as /card, instead of
         # hitting HearthstoneJSON's upstream CDN fresh on every render.
-        async def _fetch(entry: CardEntry) -> bytes | None:
+        # Cards resolved via the Blizzard API fallback (dbfIds HSJSON hasn't
+        # indexed yet) carry their own image_url instead — fetched directly,
+        # and flagged since their frame padding doesn't match _fixed_crop.
+        async def _fetch(entry: CardEntry) -> tuple[bytes | None, bool]:
             try:
+                if entry.card.image_url:
+                    return await self._client.get_bytes(entry.card.image_url), True
                 return await self._client.get_card_image_bytes(
                     entry.card.card_id, entry.card.dbf_id, size="512x"
-                )
+                ), False
             except Exception:
                 log.warning("Image unavailable for %s", entry.card.card_id)
-                return None
+                return None, False
 
-        image_data: list[bytes | None] = list(
+        image_data: list[tuple[bytes | None, bool]] = list(
             await asyncio.gather(*[_fetch(e) for e in entries])
         )
 
@@ -292,7 +314,7 @@ class ImageGenerator:
         zilliax_group_positions: list[tuple[int, int]] = []
         king_group_positions: list[tuple[int, int]] = []
 
-        for idx, (entry, raw) in enumerate(zip(entries, image_data)):
+        for idx, (entry, (raw, from_blizzard)) in enumerate(zip(entries, image_data)):
             x = (idx % cols) * card_w
             y = (idx // cols) * (card_h + row_gap)
 
@@ -333,11 +355,11 @@ class ImageGenerator:
             if raw:
                 try:
                     im = Image.open(io.BytesIO(raw)).convert("RGBA")
-                    im = _fixed_crop(im)
+                    im = _center_crop_to_ratio(im, _CARD_RATIO) if from_blizzard else _fixed_crop(im)
                     im = im.resize((card_w, card_h), Image.LANCZOS)
                     canvas.paste(im, (x, y), mask=im)
                 except Exception:
-                    log.debug("Failed to render card %s", entry.card.card_id)
+                    log.warning("Failed to render card %s", entry.card.card_id)
 
             if is_etc_sideboard:
                 tint = Image.new("RGBA", (card_w, card_h), ETC_SIDEBOARD_TINT)

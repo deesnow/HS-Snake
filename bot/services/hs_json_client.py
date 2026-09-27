@@ -318,3 +318,10 @@ class HSJsonClient:
         log.debug("← %s %s", resp.status_code, upstream_url)
         resp.raise_for_status()
         return resp.content
+
+    async def get_bytes(self, url: str) -> bytes:
+        """Fetch raw bytes from an arbitrary URL (e.g. a Blizzard API image URL)."""
+        client = await self._client()
+        resp = await client.get(url)
+        resp.raise_for_status()
+        return resp.content
