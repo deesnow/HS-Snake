@@ -23,6 +23,7 @@ class CardInfo:
     race: Optional[str] = None          # NAGA, PIRATE, DRAGON, … (minions)
     spell_school: Optional[str] = None  # SHADOW, NATURE, FIRE, … (spells)
     how_to_earn: Optional[str] = None   # present when card was awarded for free (event, reward track, etc.)
+    image_url: Optional[str] = None     # set only for cards resolved via the Blizzard API fallback
 
 
 @dataclass

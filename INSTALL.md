@@ -35,6 +35,23 @@ This guide covers three deployment paths:
 
 ---
 
+## Step 1b — (Optional) Register Blizzard API Access
+
+By default the bot gets all card data from the community-maintained [HearthstoneJSON](https://hearthstonejson.com/) project. HearthstoneJSON lags behind brand-new card reveals by anywhere from hours to over a week, so a just-announced card can appear in a submitted deck code before the bot recognizes it. Registering Blizzard's own API lets the bot fall back to Blizzard's live game data for exactly those unresolved cards.
+
+This step is optional — skip it and leave `BLIZZARD_CLIENT_ID`/`BLIZZARD_CLIENT_SECRET` unset in Step 2 to run without it.
+
+1. Sign in (or create an account) at the [Blizzard Developer Portal](https://develop.battle.net/).
+2. Go to **API Access → Clients** and click **Create Client**.
+   - Give it a name (e.g. `hs-snake-bot`).
+   - Choose the **Client Credentials** flow — this is a server-to-server bot, no redirect URI or user login is needed.
+3. Submit the form. You'll be shown a **Client ID** and **Client Secret** — copy the secret immediately, it is only ever displayed once.
+4. Keep both values handy for Step 2 below.
+
+> These credentials authenticate against `https://oauth.battle.net/token` to obtain a short-lived (~24h) access token, which is then used to call `https://us.api.blizzard.com/hearthstone/...`. The bot handles this automatically — you only need to provide the client ID/secret.
+
+---
+
 ## Step 2 — Configure Environment
 
 Create a `.env` file in your working directory with the following contents:
@@ -50,6 +67,11 @@ IMAGE_CARD_SIZE=256x
 
 HSJSON_LOCALE=enUS
 LOG_LEVEL=INFO
+
+# Optional: Blizzard API fallback for cards HearthstoneJSON hasn't indexed yet.
+# See Step 1b. Leave commented out to run without this fallback.
+# BLIZZARD_CLIENT_ID=your_battlenet_client_id
+# BLIZZARD_CLIENT_SECRET=your_battlenet_client_secret
 ```
 
 > `CACHE_BASE_URL` and all `POSTGRES_*` variables are injected automatically by Docker Compose — do not add them for Docker deployments.
@@ -348,3 +370,4 @@ hs-snake/
 | Bot fails to connect to database | `postgres` not healthy yet | Bot waits for the healthcheck — check `docker compose ps` and `docker compose logs postgres` |
 | Permission denied writing to `log/` | `log/` directory missing | Run `mkdir -p log` before `docker compose up` |
 | Message Content Intent error | Intent not enabled | Go to **Bot → Privileged Gateway Intents** and enable **Message Content Intent** |
+| Brand-new card missing from a deck list/image | HearthstoneJSON hasn't indexed the card yet | Register Blizzard API access (Step 1b) and set `BLIZZARD_CLIENT_ID`/`BLIZZARD_CLIENT_SECRET` in `.env` |

@@ -96,8 +96,8 @@ _LBL_DY_FRAC = 650 / 697   # ≈ 0.933  — label top near card bottom, pasted u
 
 # ── Row gap ───────────────────────────────────────────────────────────
 # The label protrudes ≈ 0.107 × card_h below the card bottom.
-# A gap of 0.13 × card_h ensures it is fully visible between rows.
-ROW_GAP_FRAC = 0.13
+# A gap of 0.11 × card_h keeps it fully visible with minimal slack.
+ROW_GAP_FRAC = 0.11
 
 # ── E.T.C. Band Manager dbfId ─────────────────────────────────────────
 # Sideboard cards are placed immediately after ETC in the grid and
@@ -130,26 +130,69 @@ def _fixed_crop(im: Image.Image) -> Image.Image:
     return im.crop((_CROP_L, _CROP_T, w - _CROP_R, h - _CROP_B))
 
 
-def _calc_card_size(n: int) -> tuple[int, int, int]:
-    """Return (card_w, card_h, cols) that maximises card width so the
-    grid fits fully inside the canvas without going below DUST_Y.
+def _center_crop_to_ratio(im: Image.Image, ratio: float) -> Image.Image:
+    """Center-crop to a target height/width ratio."""
+    w, h = im.size
+    target_h = round(w * ratio)
+    if target_h <= h:
+        top = (h - target_h) // 2
+        return im.crop((0, top, w, top + target_h))
+    target_w = round(h / ratio)
+    left = (w - target_w) // 2
+    return im.crop((left, 0, left + target_w, h))
 
-    For each candidate column count c (starting from smallest = widest cards):
-      card_w = CANVAS_W // c          ← fills the canvas edge-to-edge
-      rows   = ceil(n / c)
-      total_h = rows * card_h         ← no gap between rows
-    Returns the first c whose total_h ≤ DUST_Y.
+
+def _trim_transparent(im: Image.Image) -> Image.Image:
+    """Crop to the bounding box of non-transparent pixels.
+
+    Blizzard's card images are irregular, rounded-corner card cutouts on
+    an otherwise transparent PNG canvas. Left untrimmed, that transparent
+    margin gets counted as part of the image when computing the ratio
+    crop, so a chunk of "dead" space ends up baked into the tile and the
+    visible card ends up noticeably smaller than the HSJSON-sourced tiles
+    around it. Measured across several real cards, this trimmed box's
+    aspect ratio already lands within ~2-3% of our target card ratio, so
+    the ratio crop that follows only needs to trim a sliver either way.
     """
+    bbox = im.split()[-1].getbbox()
+    return im.crop(bbox) if bbox else im
+
+
+def _calc_card_size(n: int) -> tuple[int, int, int, int]:
+    """Return (card_w, card_h, cols, left_margin) that maximises card size.
+
+    For each candidate column count, the card width is capped by whichever
+    is tighter: filling the canvas width edge-to-edge, or keeping the
+    resulting row count within the DUST_Y height budget. Unlike always
+    filling the canvas width and adding columns until it fits vertically,
+    this lets a layout that's height-constrained (e.g. a 43-card deck at
+    10 columns/5 rows) shrink horizontally instead of forcing an extra,
+    smaller-card column — often yielding bigger cards with a small margin
+    on each side rather than smaller cards edge-to-edge.
+
+    Column counts that tie on card size are broken by whichever leaves the
+    last row closest to full (e.g. for 43 cards, 9 and 10 columns both
+    allow the same card size, but 9 columns fills 7/9 of the last row
+    while 10 columns only fills 3/10 — 9 wins).  Remaining ties are broken
+    by the smallest unused horizontal margin.
+    """
+    best: tuple[int, int, int, int, int] | None = None  # (card_w, -gap, -margin, cols, rows)
     for cols in range(1, n + 1):
-        card_w = CANVAS_W // cols
-        card_h = round(card_w * _CARD_RATIO)
-        row_gap = round(card_h * ROW_GAP_FRAC)
-        rows   = math.ceil(n / cols)
-        if rows * card_h + (rows - 1) * row_gap <= DUST_Y:
-            return card_w, card_h, cols
-    # Fallback: all cards in one row, minimum width
-    card_w = CANVAS_W // n
-    return card_w, round(card_w * _CARD_RATIO), n
+        rows = math.ceil(n / cols)
+        width_bound = CANVAS_W / cols
+        height_bound = DUST_Y / (_CARD_RATIO * (rows + (rows - 1) * ROW_GAP_FRAC))
+        card_w = int(min(width_bound, height_bound))
+        last_row = n - (rows - 1) * cols
+        gap = cols - last_row          # 0 = last row completely full
+        margin = CANVAS_W - cols * card_w
+        key = (card_w, -gap, -margin, cols, rows)
+        if best is None or key[:3] > best[:3]:
+            best = key
+
+    card_w, _neg_gap, _neg_margin, cols, _rows = best
+    card_h = round(card_w * _CARD_RATIO)
+    left_margin = (CANVAS_W - cols * card_w) // 2
+    return card_w, card_h, cols, left_margin
 
 
 def _label_geometry(card_w: int, card_h: int) -> tuple[tuple[int, int], int, int]:
@@ -247,7 +290,7 @@ class ImageGenerator:
 
         n = len(entries)
 
-        card_w, card_h, cols = _calc_card_size(n)
+        card_w, card_h, cols, left_margin = _calc_card_size(n)
         label_wh, lbl_dx, lbl_dy = _label_geometry(card_w, card_h)
 
         # ── Load background ───────────────────────────────────────────
@@ -270,22 +313,24 @@ class ImageGenerator:
         label_default = _load_label(2)  # x2 — used for all 2-copy cards
 
         # ── Fetch all card images concurrently ────────────────────────
-        async def _fetch(entry: CardEntry) -> bytes | None:
+        # Goes through HSJsonClient.get_card_image_bytes() so deck renders
+        # benefit from the same local Nginx cache as /card, instead of
+        # hitting HearthstoneJSON's upstream CDN fresh on every render.
+        # Cards resolved via the Blizzard API fallback (dbfIds HSJSON hasn't
+        # indexed yet) carry their own image_url instead — fetched directly,
+        # and flagged since their frame padding doesn't match _fixed_crop.
+        async def _fetch(entry: CardEntry) -> tuple[bytes | None, bool]:
             try:
-                card_id = entry.card.card_id
-                url = (
-                    f"https://art.hearthstonejson.com/v1/render/latest"
-                    f"/enUS/512x/{card_id}.png"
-                )
-                client = await self._client._client()
-                resp = await client.get(url)
-                resp.raise_for_status()
-                return resp.content
+                if entry.card.image_url:
+                    return await self._client.get_bytes(entry.card.image_url), True
+                return await self._client.get_card_image_bytes(
+                    entry.card.card_id, entry.card.dbf_id, size="512x"
+                ), False
             except Exception:
-                log.debug("Image unavailable for %s", entry.card.card_id)
-                return None
+                log.warning("Image unavailable for %s", entry.card.card_id)
+                return None, False
 
-        image_data: list[bytes | None] = list(
+        image_data: list[tuple[bytes | None, bool]] = list(
             await asyncio.gather(*[_fetch(e) for e in entries])
         )
 
@@ -295,8 +340,8 @@ class ImageGenerator:
         zilliax_group_positions: list[tuple[int, int]] = []
         king_group_positions: list[tuple[int, int]] = []
 
-        for idx, (entry, raw) in enumerate(zip(entries, image_data)):
-            x = (idx % cols) * card_w
+        for idx, (entry, (raw, from_blizzard)) in enumerate(zip(entries, image_data)):
+            x = left_margin + (idx % cols) * card_w
             y = (idx // cols) * (card_h + row_gap)
 
             # ETC group membership
@@ -336,11 +381,15 @@ class ImageGenerator:
             if raw:
                 try:
                     im = Image.open(io.BytesIO(raw)).convert("RGBA")
-                    im = _fixed_crop(im)
+                    im = (
+                        _center_crop_to_ratio(_trim_transparent(im), _CARD_RATIO)
+                        if from_blizzard
+                        else _fixed_crop(im)
+                    )
                     im = im.resize((card_w, card_h), Image.LANCZOS)
                     canvas.paste(im, (x, y), mask=im)
                 except Exception:
-                    log.debug("Failed to render card %s", entry.card.card_id)
+                    log.warning("Failed to render card %s", entry.card.card_id)
 
             if is_etc_sideboard:
                 tint = Image.new("RGBA", (card_w, card_h), ETC_SIDEBOARD_TINT)

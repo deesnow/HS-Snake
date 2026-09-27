@@ -3,10 +3,11 @@ Deck code decoder — wraps the `hearthstone` library and enriches
 decoded dbfIds with full CardInfo from HSJsonClient.
 """
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from hearthstone.deckstrings import Deck
 
+from bot.services.blizzard_client import BlizzardClient
 from bot.services.models import CardEntry, CardInfo, DeckInfo
 
 if TYPE_CHECKING:
@@ -38,8 +39,9 @@ _CLASS_BY_HERO_ID: dict[int, str] = {
 
 
 class DeckDecoder:
-    def __init__(self, hs_client: "HSJsonClient") -> None:
+    def __init__(self, hs_client: "HSJsonClient", blizzard_client: Optional[BlizzardClient] = None) -> None:
         self._client = hs_client
+        self._blizzard = blizzard_client or BlizzardClient()
 
     async def decode(self, code: str) -> DeckInfo:
         """
@@ -86,9 +88,15 @@ class DeckDecoder:
                 # Fabled companion dbfIds appear in the deck code alongside the
                 # fabled card itself; we add them via get_fabled_companions below,
                 # so silently skip them here instead of logging a warning.
-                if not await self._client.is_fabled_companion(dbf_id):
+                if await self._client.is_fabled_companion(dbf_id):
+                    continue
+                # HearthstoneJSON may not have indexed a just-revealed card yet;
+                # fall back to Blizzard's live API before giving up on it.
+                card = await self._blizzard.get_card_by_dbf_id(dbf_id)
+                if card is None:
                     log.warning("Unknown dbfId=%s in deck, skipping", dbf_id)
-                continue
+                    continue
+                log.info("Resolved dbfId=%s via Blizzard API fallback: %s", dbf_id, card.name)
             card_entries.append(CardEntry(card=card, count=count))
             # Fabled cards automatically bring companion cards — add them to the
             # main card list so they appear in every deck view sorted by mana cost.
