@@ -131,12 +131,7 @@ def _fixed_crop(im: Image.Image) -> Image.Image:
 
 
 def _center_crop_to_ratio(im: Image.Image, ratio: float) -> Image.Image:
-    """Center-crop to a target height/width ratio.
-
-    Used for images fetched from the Blizzard API fallback, whose exact
-    frame padding (unlike HearthstoneJSON's renders) isn't known, so the
-    precise pixel crop from `_fixed_crop` can't be applied.
-    """
+    """Center-crop to a target height/width ratio."""
     w, h = im.size
     target_h = round(w * ratio)
     if target_h <= h:
@@ -147,26 +142,41 @@ def _center_crop_to_ratio(im: Image.Image, ratio: float) -> Image.Image:
     return im.crop((left, 0, left + target_w, h))
 
 
-def _calc_card_size(n: int) -> tuple[int, int, int]:
-    """Return (card_w, card_h, cols) that maximises card width so the
-    grid fits fully inside the canvas without going below DUST_Y.
+def _calc_card_size(n: int) -> tuple[int, int, int, int]:
+    """Return (card_w, card_h, cols, left_margin) that maximises card size.
 
-    For each candidate column count c (starting from smallest = widest cards):
-      card_w = CANVAS_W // c          ← fills the canvas edge-to-edge
-      rows   = ceil(n / c)
-      total_h = rows * card_h         ← no gap between rows
-    Returns the first c whose total_h ≤ DUST_Y.
+    For each candidate column count, the card width is capped by whichever
+    is tighter: filling the canvas width edge-to-edge, or keeping the
+    resulting row count within the DUST_Y height budget. Unlike always
+    filling the canvas width and adding columns until it fits vertically,
+    this lets a layout that's height-constrained (e.g. a 43-card deck at
+    10 columns/5 rows) shrink horizontally instead of forcing an extra,
+    smaller-card column — often yielding bigger cards with a small margin
+    on each side rather than smaller cards edge-to-edge.
+
+    Column counts that tie on card size are broken by whichever leaves the
+    last row closest to full (e.g. for 43 cards, 9 and 10 columns both
+    allow the same card size, but 9 columns fills 7/9 of the last row
+    while 10 columns only fills 3/10 — 9 wins).  Remaining ties are broken
+    by the smallest unused horizontal margin.
     """
+    best: tuple[int, int, int, int, int] | None = None  # (card_w, -gap, -margin, cols, rows)
     for cols in range(1, n + 1):
-        card_w = CANVAS_W // cols
-        card_h = round(card_w * _CARD_RATIO)
-        row_gap = round(card_h * ROW_GAP_FRAC)
-        rows   = math.ceil(n / cols)
-        if rows * card_h + (rows - 1) * row_gap <= DUST_Y:
-            return card_w, card_h, cols
-    # Fallback: all cards in one row, minimum width
-    card_w = CANVAS_W // n
-    return card_w, round(card_w * _CARD_RATIO), n
+        rows = math.ceil(n / cols)
+        width_bound = CANVAS_W / cols
+        height_bound = DUST_Y / (_CARD_RATIO * (rows + (rows - 1) * ROW_GAP_FRAC))
+        card_w = int(min(width_bound, height_bound))
+        last_row = n - (rows - 1) * cols
+        gap = cols - last_row          # 0 = last row completely full
+        margin = CANVAS_W - cols * card_w
+        key = (card_w, -gap, -margin, cols, rows)
+        if best is None or key[:3] > best[:3]:
+            best = key
+
+    card_w, _neg_gap, _neg_margin, cols, _rows = best
+    card_h = round(card_w * _CARD_RATIO)
+    left_margin = (CANVAS_W - cols * card_w) // 2
+    return card_w, card_h, cols, left_margin
 
 
 def _label_geometry(card_w: int, card_h: int) -> tuple[tuple[int, int], int, int]:
@@ -264,7 +274,7 @@ class ImageGenerator:
 
         n = len(entries)
 
-        card_w, card_h, cols = _calc_card_size(n)
+        card_w, card_h, cols, left_margin = _calc_card_size(n)
         label_wh, lbl_dx, lbl_dy = _label_geometry(card_w, card_h)
 
         # ── Load background ───────────────────────────────────────────
@@ -315,7 +325,7 @@ class ImageGenerator:
         king_group_positions: list[tuple[int, int]] = []
 
         for idx, (entry, (raw, from_blizzard)) in enumerate(zip(entries, image_data)):
-            x = (idx % cols) * card_w
+            x = left_margin + (idx % cols) * card_w
             y = (idx // cols) * (card_h + row_gap)
 
             # ETC group membership
