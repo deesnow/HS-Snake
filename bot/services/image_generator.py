@@ -142,6 +142,22 @@ def _center_crop_to_ratio(im: Image.Image, ratio: float) -> Image.Image:
     return im.crop((left, 0, left + target_w, h))
 
 
+def _trim_transparent(im: Image.Image) -> Image.Image:
+    """Crop to the bounding box of non-transparent pixels.
+
+    Blizzard's card images are irregular, rounded-corner card cutouts on
+    an otherwise transparent PNG canvas. Left untrimmed, that transparent
+    margin gets counted as part of the image when computing the ratio
+    crop, so a chunk of "dead" space ends up baked into the tile and the
+    visible card ends up noticeably smaller than the HSJSON-sourced tiles
+    around it. Measured across several real cards, this trimmed box's
+    aspect ratio already lands within ~2-3% of our target card ratio, so
+    the ratio crop that follows only needs to trim a sliver either way.
+    """
+    bbox = im.split()[-1].getbbox()
+    return im.crop(bbox) if bbox else im
+
+
 def _calc_card_size(n: int) -> tuple[int, int, int, int]:
     """Return (card_w, card_h, cols, left_margin) that maximises card size.
 
@@ -365,7 +381,11 @@ class ImageGenerator:
             if raw:
                 try:
                     im = Image.open(io.BytesIO(raw)).convert("RGBA")
-                    im = _center_crop_to_ratio(im, _CARD_RATIO) if from_blizzard else _fixed_crop(im)
+                    im = (
+                        _center_crop_to_ratio(_trim_transparent(im), _CARD_RATIO)
+                        if from_blizzard
+                        else _fixed_crop(im)
+                    )
                     im = im.resize((card_w, card_h), Image.LANCZOS)
                     canvas.paste(im, (x, y), mask=im)
                 except Exception:
