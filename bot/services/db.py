@@ -31,7 +31,10 @@ async def init_db_pool():
                 password=_DB_PASSWORD,
                 database=_DB_NAME,
                 min_size=2,
-                max_size=15,
+                # 6 concurrent leaderboard refreshes hold one connection each
+                # for their whole run; the rest serve commands. Postgres's
+                # default max_connections (100) covers this plus rank-api's 10.
+                max_size=20,
             )
             async with _pool.acquire() as conn:
                 await _migrate(conn)
@@ -309,4 +312,19 @@ async def _migrate(conn: asyncpg.Connection) -> None:
     await conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_prl
             ON player_rank_log (battletag, region, mode, season_id, observed_at DESC);
+    """)
+
+    # ── Indexes for per-region/mode/season scans (not battletag-first) ───────
+    # player_rank_log: /glb's per-day rank lookup and the refresh's rank-log
+    # dedupe seed. player_season_score: /glb ordering. user_battletags: the
+    # refresh's per-region load and /glb's LOWER(battletag) join.
+    await conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_prl_region_season_time
+            ON player_rank_log (region, mode, season_id, observed_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_pss_region_season_score
+            ON player_season_score (region, mode, season_id, season_score DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_ub_region_btag
+            ON user_battletags (region, LOWER(battletag));
     """)

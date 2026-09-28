@@ -4,7 +4,7 @@ Guild leaderboard slash command: /glb
 Shows a ranked list of season scores filtered to members of the calling Discord server.
 """
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import discord
@@ -138,7 +138,7 @@ class GuildLbCommands(commands.Cog):
             else:
                 rank_date = await conn.fetchval(
                     """
-                    SELECT MAX((observed_at AT TIME ZONE 'UTC')::date)
+                    SELECT (MAX(observed_at) AT TIME ZONE 'UTC')::date
                     FROM player_rank_log
                     WHERE region = $1 AND mode = $2 AND season_id = $3
                     """,
@@ -149,6 +149,11 @@ class GuildLbCommands(commands.Cog):
 
             rank_by_battletag: dict[str, int] = {}
             if rank_date is not None:
+                # Range on observed_at (not a cast of it) so the
+                # (region, mode, season_id, observed_at) index applies.
+                day_start = datetime(
+                    rank_date.year, rank_date.month, rank_date.day, tzinfo=timezone.utc
+                )
                 rank_rows = await conn.fetch(
                     """
                     SELECT DISTINCT ON (battletag) battletag, rank
@@ -156,13 +161,15 @@ class GuildLbCommands(commands.Cog):
                     WHERE region = $1
                       AND mode = $2
                       AND season_id = $3
-                      AND (observed_at AT TIME ZONE 'UTC')::date = $4::date
+                      AND observed_at >= $4
+                      AND observed_at <  $5
                     ORDER BY battletag, observed_at DESC
                     """,
                     region.value,
                     mode.value,
                     season_id,
-                    rank_date,
+                    day_start,
+                    day_start + timedelta(days=1),
                 )
                 rank_by_battletag = {
                     r["battletag"]: int(r["rank"])

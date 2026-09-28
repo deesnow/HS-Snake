@@ -16,9 +16,9 @@ services:
       LOG_LEVEL: DEBUG
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
-      POSTGRES_USER: hs-snake_user
-      POSTGRES_PASSWORD: hs-snake_password
-      POSTGRES_DB: hs-snake_db
+      POSTGRES_USER: ${POSTGRES_USER:-hs-snake_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hs-snake_password}
+      POSTGRES_DB: ${POSTGRES_DB:-hs-snake_db}
     command: >
       python -m watchdog.watchmedo auto-restart
       --patterns='*.py'
@@ -38,9 +38,9 @@ services:
     environment:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
-      POSTGRES_USER: hs-snake_user
-      POSTGRES_PASSWORD: hs-snake_password
-      POSTGRES_DB: hs-snake_db
+      POSTGRES_USER: ${POSTGRES_USER:-hs-snake_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hs-snake_password}
+      POSTGRES_DB: ${POSTGRES_DB:-hs-snake_db}
     command: >
       python -m watchdog.watchmedo auto-restart
       --patterns='*.py'
@@ -49,3 +49,8 @@ services:
       -- python -m uvicorn decktrackerAPI.main:app --host 0.0.0.0 --port 8000
     networks:
       - internal
+
+  postgres:
+    # Local access (psql, GUI clients, running the bot outside Docker).
+    ports:
+      - "5432:5432"

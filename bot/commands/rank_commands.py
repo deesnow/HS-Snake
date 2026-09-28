@@ -521,26 +521,13 @@ class RankCommands(commands.Cog):
         return await self._section_default(battletag, region)
 
     async def _section_single(self, battletag, region, mode, mode_label):
-        entry, season_id = await self._fetch_entry(battletag, region, mode)
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         async with get_db() as conn:
-            season_row = await conn.fetchrow(
-                """
-                SELECT season_score FROM player_season_score
-                WHERE battletag = $1 AND region = $2 AND mode = $3 AND season_id = $4
-                """,
-                battletag.lower(), region, mode, season_id,
-            )
-            legend_count = await conn.fetchval(
-                """
-                SELECT legend_count FROM player_daily_dps
-                WHERE battletag = $1 AND region = $2 AND mode = $3 AND season_id = $4
-                ORDER BY date_utc DESC, updated_at DESC
-                LIMIT 1
-                """,
-                battletag.lower(), region, mode, season_id,
-            )
+            entry, season_id = await self._fetch_entry(conn, battletag, region, mode)
+            stats = await _fetch_mode_stats(conn, battletag.lower(), region, mode, season_id, today)
 
-        season_score = f"{season_row['season_score']:.2f}" if season_row else "-"
+        legend_count = stats["latest_legend_count"]
+        season_score = f"{stats['season_score']:.2f}" if stats["season_score"] is not None else "-"
 
         header = f"🏆 **{battletag}** — {region}  ·  Season {season_id}"
         if entry is None:
@@ -561,77 +548,13 @@ class RankCommands(commands.Cog):
     async def _section_default(self, battletag, region):
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         bt = battletag.lower()
-        (std_entry, std_season), (wild_entry, wild_season) = await asyncio.gather(
-            self._fetch_entry(battletag, region, "standard"),
-            self._fetch_entry(battletag, region, "wild"),
-        )
+        # One connection for the whole section: /rank builds a section per
+        # registered region concurrently, so per-query acquires multiply fast.
         async with get_db() as conn:
-            std_season_row = await conn.fetchrow(
-                """
-                SELECT season_score, days_counted FROM player_season_score
-                WHERE battletag = $1 AND region = $2 AND mode = $3 AND season_id = $4
-                """,
-                bt, region, "standard", std_season,
-            )
-            std_today_row = await conn.fetchrow(
-                """
-                SELECT dps, legend_count FROM player_daily_dps
-                WHERE battletag = $1 AND region = $2 AND mode = $3
-                  AND season_id = $4 AND date_utc = $5
-                """,
-                bt, region, "standard", std_season, today,
-            )
-            std_best_row = await conn.fetchrow(
-                """
-                SELECT best_rank, legend_count FROM player_daily_dps
-                WHERE battletag = $1 AND region = $2 AND mode = $3 AND season_id = $4
-                ORDER BY best_rank ASC, updated_at DESC
-                LIMIT 1
-                """,
-                bt, region, "standard", std_season,
-            )
-            std_latest_legend_count = await conn.fetchval(
-                """
-                SELECT legend_count FROM player_daily_dps
-                WHERE battletag = $1 AND region = $2 AND mode = $3 AND season_id = $4
-                ORDER BY date_utc DESC, updated_at DESC
-                LIMIT 1
-                """,
-                bt, region, "standard", std_season,
-            )
-            wild_season_row = await conn.fetchrow(
-                """
-                SELECT season_score, days_counted FROM player_season_score
-                WHERE battletag = $1 AND region = $2 AND mode = $3 AND season_id = $4
-                """,
-                bt, region, "wild", wild_season,
-            )
-            wild_today_row = await conn.fetchrow(
-                """
-                SELECT dps, legend_count FROM player_daily_dps
-                WHERE battletag = $1 AND region = $2 AND mode = $3
-                  AND season_id = $4 AND date_utc = $5
-                """,
-                bt, region, "wild", wild_season, today,
-            )
-            wild_best_row = await conn.fetchrow(
-                """
-                SELECT best_rank, legend_count FROM player_daily_dps
-                WHERE battletag = $1 AND region = $2 AND mode = $3 AND season_id = $4
-                ORDER BY best_rank ASC, updated_at DESC
-                LIMIT 1
-                """,
-                bt, region, "wild", wild_season,
-            )
-            wild_latest_legend_count = await conn.fetchval(
-                """
-                SELECT legend_count FROM player_daily_dps
-                WHERE battletag = $1 AND region = $2 AND mode = $3 AND season_id = $4
-                ORDER BY date_utc DESC, updated_at DESC
-                LIMIT 1
-                """,
-                bt, region, "wild", wild_season,
-            )
+            std_entry, std_season = await self._fetch_entry(conn, battletag, region, "standard")
+            wild_entry, wild_season = await self._fetch_entry(conn, battletag, region, "wild")
+            std = await _fetch_mode_stats(conn, bt, region, "standard", std_season, today)
+            wild = await _fetch_mode_stats(conn, bt, region, "wild", wild_season, today)
 
         def _rank_with_count(rank, legend_count):
             if rank is None:
@@ -643,25 +566,20 @@ class RankCommands(commands.Cog):
         def _current(e, legend_count):
             return _rank_with_count(e.rank, legend_count) if e else "-"
 
-        def _best(row):
-            if row is None:
-                return "-"
-            return _rank_with_count(row["best_rank"], row["legend_count"])
+        def _best(stats):
+            return _rank_with_count(stats["best_rank"], stats["best_legend_count"])
 
-        def _score(r):
-            return f"{r['season_score']:.2f}" if r else "-"
+        def _num(value):
+            return f"{value:.2f}" if value is not None else "-"
 
-        def _dps(row):
-            return f"{row['dps']:.2f}" if row else "-"
-
-        std_current   = _current(std_entry, std_latest_legend_count)
-        wild_current  = _current(wild_entry, wild_latest_legend_count)
-        std_best_str  = _best(std_best_row)
-        wild_best_str = _best(wild_best_row)
-        std_score     = _score(std_season_row)
-        wild_score    = _score(wild_season_row)
-        std_dps       = _dps(std_today_row)
-        wild_dps      = _dps(wild_today_row)
+        std_current   = _current(std_entry, std["latest_legend_count"])
+        wild_current  = _current(wild_entry, wild["latest_legend_count"])
+        std_best_str  = _best(std)
+        wild_best_str = _best(wild)
+        std_score     = _num(std["season_score"])
+        wild_score    = _num(wild["season_score"])
+        std_dps       = _num(std["today_dps"])
+        wild_dps      = _num(wild["today_dps"])
 
         label_dps = "Today's Score"
         w = max(len(label_dps), len(std_current), len(wild_current),
@@ -680,55 +598,90 @@ class RankCommands(commands.Cog):
         ])
 
     @staticmethod
-    async def _fetch_entry(battletag, region, mode):
+    async def _fetch_entry(conn, battletag, region, mode):
         needle = battletag.lower().split("#")[0]
-        async with get_db() as conn:
-            # Current season is derived from the live leaderboard with month-rollover inference.
-            season_id = await resolve_current_season_id(conn, region, mode)
-            if season_id is None:
-                raise RuntimeError(
-                    f"Leaderboard data for {region}/{mode} is not available yet. "
-                    "The bot is still loading data in the background — please try again in a few minutes."
-                )
-
-            # Primary: most recent tracked observation for this registered player in the current season.
-            row = await conn.fetchrow(
-                """
-                SELECT rank, rating
-                FROM player_rank_log
-                WHERE battletag = $1 AND region = $2 AND mode = $3 AND season_id = $4
-                ORDER BY observed_at DESC
-                LIMIT 1
-                """,
-                battletag.lower(), region.upper(), mode.lower(), season_id,
+        # Current season is derived from the live leaderboard with month-rollover inference.
+        season_id = await resolve_current_season_id(conn, region, mode)
+        if season_id is None:
+            raise RuntimeError(
+                f"Leaderboard data for {region}/{mode} is not available yet. "
+                "The bot is still loading data in the background — please try again in a few minutes."
             )
-            if row:
-                return LeaderboardEntry(
-                    rank=row["rank"],
-                    battletag=needle,
-                    battletag_orig=battletag,
-                    rating=row["rating"],
-                ), season_id
 
-            # Fallback: direct index lookup in ldb_current_entries.
-            ldb_row = await conn.fetchrow(
-                """
-                SELECT rank, battletag, battletag_orig, rating
-                FROM ldb_current_entries
-                WHERE region = $1 AND mode = $2 AND battletag = $3
-                LIMIT 1
-                """,
-                region.upper(), mode.lower(), needle,
-            )
-            if ldb_row:
-                return LeaderboardEntry(
-                    rank=ldb_row["rank"],
-                    battletag=ldb_row["battletag"],
-                    battletag_orig=ldb_row["battletag_orig"],
-                    rating=ldb_row["rating"],
-                ), season_id
+        # Primary: most recent tracked observation for this registered player in the current season.
+        row = await conn.fetchrow(
+            """
+            SELECT rank, rating
+            FROM player_rank_log
+            WHERE battletag = $1 AND region = $2 AND mode = $3 AND season_id = $4
+            ORDER BY observed_at DESC
+            LIMIT 1
+            """,
+            battletag.lower(), region.upper(), mode.lower(), season_id,
+        )
+        if row:
+            return LeaderboardEntry(
+                rank=row["rank"],
+                battletag=needle,
+                battletag_orig=battletag,
+                rating=row["rating"],
+            ), season_id
 
-            return None, season_id
+        # Fallback: direct index lookup in ldb_current_entries.
+        ldb_row = await conn.fetchrow(
+            """
+            SELECT rank, battletag, battletag_orig, rating
+            FROM ldb_current_entries
+            WHERE region = $1 AND mode = $2 AND battletag = $3
+            LIMIT 1
+            """,
+            region.upper(), mode.lower(), needle,
+        )
+        if ldb_row:
+            return LeaderboardEntry(
+                rank=ldb_row["rank"],
+                battletag=ldb_row["battletag"],
+                battletag_orig=ldb_row["battletag_orig"],
+                rating=ldb_row["rating"],
+            ), season_id
+
+        return None, season_id
+
+
+async def _fetch_mode_stats(conn, battletag, region, mode, season_id, today):
+    """
+    Season score, today's DPS, season-best rank (with its legend count) and the
+    latest legend count for one player/mode/season, in a single round-trip.
+    Any value is None when there's no data for it.
+    """
+    row = await conn.fetchrow(
+        """
+        SELECT
+            (SELECT season_score FROM player_season_score
+             WHERE battletag = $1 AND region = $2 AND mode = $3 AND season_id = $4
+            ) AS season_score,
+            (SELECT dps FROM player_daily_dps
+             WHERE battletag = $1 AND region = $2 AND mode = $3
+               AND season_id = $4 AND date_utc = $5
+            ) AS today_dps,
+            best.best_rank,
+            best.legend_count AS best_legend_count,
+            (SELECT legend_count FROM player_daily_dps
+             WHERE battletag = $1 AND region = $2 AND mode = $3 AND season_id = $4
+             ORDER BY date_utc DESC, updated_at DESC
+             LIMIT 1
+            ) AS latest_legend_count
+        FROM (SELECT 1) AS one
+        LEFT JOIN LATERAL (
+            SELECT best_rank, legend_count FROM player_daily_dps
+            WHERE battletag = $1 AND region = $2 AND mode = $3 AND season_id = $4
+            ORDER BY best_rank ASC, updated_at DESC
+            LIMIT 1
+        ) AS best ON true
+        """,
+        battletag, region, mode, season_id, today,
+    )
+    return dict(row)
 
 
 async def setup(bot: commands.Bot) -> None:

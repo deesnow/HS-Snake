@@ -9,9 +9,9 @@ services:
       LOG_FILE: /app/logs/bot.log
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
-      POSTGRES_USER: hs-snake_user
-      POSTGRES_PASSWORD: hs-snake_password
-      POSTGRES_DB: hs-snake_db
+      POSTGRES_USER: ${POSTGRES_USER:-hs-snake_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hs-snake_password}
+      POSTGRES_DB: ${POSTGRES_DB:-hs-snake_db}
     depends_on:
       cache:
         condition: service_healthy
@@ -52,9 +52,9 @@ services:
     environment:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
-      POSTGRES_USER: hs-snake_user
-      POSTGRES_PASSWORD: hs-snake_password
-      POSTGRES_DB: hs-snake_db
+      POSTGRES_USER: ${POSTGRES_USER:-hs-snake_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hs-snake_password}
+      POSTGRES_DB: ${POSTGRES_DB:-hs-snake_db}
     depends_on:
       postgres:
         condition: service_healthy
@@ -104,17 +104,17 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: hs-snake_user
-      POSTGRES_PASSWORD: hs-snake_password
-      POSTGRES_DB: hs-snake_db
+      POSTGRES_USER: ${POSTGRES_USER:-hs-snake_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hs-snake_password}
+      POSTGRES_DB: ${POSTGRES_DB:-hs-snake_db}
     volumes:
       - ./pgdata:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
+    # No host port: bot and rank-api reach Postgres over the internal network.
+    # docker-compose.dev.yml publishes 5432 for local tools.
     networks:
       - internal
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U hs-snake_user -d hs-snake_db"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
