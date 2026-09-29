@@ -1,13 +1,20 @@
 """
-Automatic deck code detection — listens to messages and responds
-when a valid Hearthstone deck string is found.
+Automatic deck code and card name detection — listens to messages and
+responds when a valid Hearthstone deck string or a <<card name>> is found.
 
-Detection pipeline
-------------------
+Deck detection pipeline
+-----------------------
 1. Regex scan  — find base64-like token(s) in message text
 2. Base64 test — must decode cleanly to bytes
 3. Deck parse  — hearthstone library must parse it as a valid deck
-4. Reply       — same format as /deck command
+4. Reply       — per the guild's /botadmin decktype: card list (as /deck, the
+                 default) or deck image (as /deckimage)
+
+Card lookup
+-----------
+Text between << and >> (full or partial card name) is searched in the card DB:
+one match → card image; several → a "Show matches" button that opens the
+/cardsearch results list and picker privately (ephemeral) for whoever clicks.
 """
 import base64
 import io
@@ -22,6 +29,7 @@ from bot.services.deck_decoder import DeckDecoder
 from bot.services.hs_json_client import HSJsonClient
 from bot.services.image_generator import ImageGenerator
 from bot.commands.deck_commands import build_simple_deck_text
+from bot.commands.search_commands import reply_card_lookup
 
 log = logging.getLogger(__name__)
 
@@ -29,6 +37,21 @@ log = logging.getLogger(__name__)
 # always starting with "AAE" (the encoded header byte sequence).
 # Note: trailing \b cannot be used after '=' (non-word char); (?!\w) is used instead.
 _DECK_RE = re.compile(r'\bAAE[A-Za-z0-9+/]{20,}={0,2}(?!\w)')
+
+# <<card name>> lookups. At least 2 characters, so <<a>> doesn't list half the DB.
+_CARD_QUERY_RE = re.compile(r'<<\s*([^<>\n]{2,60}?)\s*>>')
+# Cap per message so one message can't make the bot post a wall of replies.
+_MAX_CARD_QUERIES = 3
+
+
+def extract_card_queries(text: str) -> list[str]:
+    """Distinct <<card name>> queries in *text*, in order, capped at _MAX_CARD_QUERIES."""
+    queries: list[str] = []
+    for match in _CARD_QUERY_RE.findall(text):
+        query = " ".join(match.split())
+        if len(query) >= 2 and query.lower() not in (q.lower() for q in queries):
+            queries.append(query)
+    return queries[:_MAX_CARD_QUERIES]
 
 
 def _looks_like_deck_code(token: str) -> bool:
@@ -86,22 +109,56 @@ class AutoDetectCog(commands.Cog):
                 log.warning("Also failed to edit pending message in channel %s", message.channel.id)
             return False
 
+    async def _reply_auto_deck_image(self, message: discord.Message, deck) -> bool:
+        """
+        Auto-detect reply in deck-image mode: same output as /deckimage.
+        Returns False on failure so the caller falls back to the card list.
+        """
+        try:
+            image_bytes = await self.image_gen.generate_deck_image(deck)
+            file = discord.File(fp=image_bytes, filename="deck.png")
+            await message.reply(
+                content=f"**{deck.hero_class}** — {deck.format_label}  ·  {deck.total_cards} cards",
+                file=file,
+                mention_author=False,
+            )
+            return True
+        except Exception:
+            log.warning(
+                "Auto-detect deck image failed in channel %s, falling back to card list",
+                message.channel.id, exc_info=True,
+            )
+            return False
+
+    async def _reply_card_lookups(self, message: discord.Message, queries: list[str]) -> None:
+        for query in queries:
+            try:
+                await reply_card_lookup(self.hs_client, message, query)
+            except Exception:
+                log.warning(
+                    "Card lookup failed in channel %s, query=%r",
+                    message.channel.id, query, exc_info=True,
+                )
+
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
         # Ignore bot messages
         if message.author.bot:
             return
 
+        card_queries = extract_card_queries(message.content)
+
         # ── Bot-mention path ──────────────────────────────────────────────────
-        # When the bot is @tagged AND a deck code is present, always reply with
-        # the deck image — regardless of guild settings or channel scope.
+        # When the bot is @tagged AND a deck code or <<card name>> is present,
+        # always reply — regardless of guild settings or channel scope.
         if self.bot.user in message.mentions:
             candidates = _DECK_RE.findall(message.content)
             for token in candidates:
                 if _looks_like_deck_code(token):
                     await self._reply_deck_image(message, token)
-                    return  # handled; do not fall through to auto-detect
-            # Bot was mentioned but no deck code found — ignore silently
+                    break
+            await self._reply_card_lookups(message, card_queries)
+            # Handled (or nothing to do) — do not fall through to auto-detect
             return
 
         # ── Auto-detect path ─────────────────────────────────────────────────
@@ -119,6 +176,8 @@ class AutoDetectCog(commands.Cog):
         if not cfg.all_channels and message.channel.id not in cfg.monitored_channels:
             return
 
+        await self._reply_card_lookups(message, card_queries)
+
         # Step 1 — regex scan
         candidates = _DECK_RE.findall(message.content)
         if not candidates:
@@ -135,8 +194,10 @@ class AutoDetectCog(commands.Cog):
             except Exception:
                 continue
 
-            log.info("auto-detect deck code in guild=%s channel=%s user=%s code=%.40s", message.guild.id, message.channel.id, message.author, token)
-            # Step 4 — reply in the same channel
+            log.info("auto-detect deck code in guild=%s channel=%s user=%s display=%s code=%.40s", message.guild.id, message.channel.id, message.author, cfg.deck_display, token)
+            # Step 4 — reply in the same channel, as the guild's /botadmin decktype says
+            if cfg.deck_display == gs.DECK_DISPLAY_IMAGE and await self._reply_auto_deck_image(message, deck):
+                break
             text = build_simple_deck_text(deck, token)
             try:
                 await message.reply(text, mention_author=False)

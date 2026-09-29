@@ -34,6 +34,10 @@ logging.basicConfig(
     handlers=_log_handlers,
     force=True,
 )
+# httpx logs every request ("HTTP Request: GET ...") at INFO — e.g. each
+# leaderboard page. Only surface those when running at DEBUG.
+if logging.getLogger().getEffectiveLevel() > logging.DEBUG:
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 log = logging.getLogger(__name__)
 
 

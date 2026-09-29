@@ -1,9 +1,20 @@
 """
 Helpers for resolving leaderboard season IDs across month rollover.
 """
+import time
 from calendar import monthrange
 from datetime import date, datetime, timezone
 from typing import Optional, Tuple
+
+# resolve_current_season_id runs on every /rank, /glb and chart call, but the
+# answer only changes at season rollover. Cache it briefly per (region, mode);
+# leaderboard refreshes invalidate it when they start a run.
+_CURRENT_SEASON_TTL = 60.0
+_current_season_cache: dict[tuple[str, str], tuple[float, Optional[int]]] = {}
+
+
+def invalidate_current_season_id(region: str, mode: str) -> None:
+    _current_season_cache.pop((region.upper(), mode.lower()), None)
 
 
 async def resolve_current_season_id(conn, region: str, mode: str) -> Optional[int]:
@@ -15,8 +26,19 @@ async def resolve_current_season_id(conn, region: str, mode: str) -> Optional[in
     before any legend entries or refresh audit rows exist for that month. In
     that rollover window, infer the new current season as max(ldb_current)+1.
     """
-    region_value = region.upper()
-    mode_value = mode.lower()
+    key = (region.upper(), mode.lower())
+    cached = _current_season_cache.get(key)
+    if cached is not None and time.monotonic() - cached[0] < _CURRENT_SEASON_TTL:
+        return cached[1]
+
+    season_id = await _resolve_current_season_id(conn, *key)
+    # Don't cache "no data yet", so the first refresh is picked up immediately.
+    if season_id is not None:
+        _current_season_cache[key] = (time.monotonic(), season_id)
+    return season_id
+
+
+async def _resolve_current_season_id(conn, region_value: str, mode_value: str) -> Optional[int]:
 
     current_season_id = await conn.fetchval(
         "SELECT MAX(season_id) FROM ldb_current_entries WHERE region = $1 AND mode = $2",
@@ -48,8 +70,8 @@ async def resolve_current_season_id(conn, region: str, mode: str) -> Optional[in
         """
         SELECT EXISTS (
             SELECT 1
-            FROM ldb_refresh_log
-            WHERE region = $1 AND mode = $2 AND completed_at >= $3
+            FROM ldb_seasons
+            WHERE region = $1 AND mode = $2 AND last_refresh_at >= $3
         )
         """,
         region_value,
@@ -69,15 +91,15 @@ async def resolve_season_month(conn, region: str, mode: str, season_id: int) -> 
     """
     Calendar month (as its first-of-month date) a season_id falls in.
 
-    Derived from ldb_refresh_log — the append-only refresh audit log, keyed only
-    by region+mode+season_id, never battletag. This works for ANY season_id,
+    Derived from ldb_seasons (first refresh time of each season), keyed only by
+    region+mode+season_id, never battletag. This works for ANY season_id,
     including ones a specific player has zero data for (e.g. they never reached
     Legend that month), unlike deriving the month from a player's own
     player_rank_log rows. It also works for past seasons, unlike
     ldb_current_entries, which is a live-upsert table that only ever holds the
     *current* season's rows and loses history on every rollover.
 
-    Falls back to the current month if the season has no refresh-log rows yet
+    Falls back to the current month if the season has no ldb_seasons row yet
     (e.g. immediately after rollover, before the first refresh cycle completes).
     """
     region_value = region.upper()
@@ -85,7 +107,7 @@ async def resolve_season_month(conn, region: str, mode: str, season_id: int) -> 
 
     completed_at = await conn.fetchval(
         """
-        SELECT MIN(completed_at) FROM ldb_refresh_log
+        SELECT first_refresh_at FROM ldb_seasons
         WHERE region = $1 AND mode = $2 AND season_id = $3
         """,
         region_value, mode_value, season_id,

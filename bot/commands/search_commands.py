@@ -6,8 +6,10 @@ name text field. Clicking 🔍 Search runs the query; results are paginated with
 ◀ Prev / ▶ Next buttons. The entire UI is ephemeral — only the invoking user
 sees it.
 """
+import asyncio
 import io
 import logging
+from difflib import SequenceMatcher
 from typing import Optional
 
 import discord
@@ -145,6 +147,8 @@ class CardResultsView(discord.ui.View):
         card_class: str,
         card_type: str,
         name_query: str,
+        title: Optional[str] = None,
+        public_pick: bool = False,
     ) -> None:
         super().__init__(timeout=180)
         self.hs_client = hs_client
@@ -154,6 +158,11 @@ class CardResultsView(discord.ui.View):
         self._class = card_class
         self._type = card_type
         self.name_query = name_query
+        # Embed title override, kept across pages (<<name>> lookups).
+        self.title = title
+        # Post the picked card image publicly in the channel (the list itself
+        # stays private). Used by <<name>> lookups; /cardsearch keeps it private.
+        self.public_pick = public_pick
 
         # Row 0: card image picker for the current page
         start = page * PAGE_SIZE
@@ -183,6 +192,9 @@ class CardResultsView(discord.ui.View):
             return
         start = self._page * PAGE_SIZE
         card = self._results[start + int(value)]
+        if self.public_pick:
+            await self._post_card_publicly(interaction, card)
+            return
         await interaction.response.send_message(f"⏳ Loading **{card.name}**…", ephemeral=True)
         try:
             image_bytes = await self.hs_client.get_card_image_bytes(card.card_id, card.dbf_id)
@@ -193,26 +205,41 @@ class CardResultsView(discord.ui.View):
             log.exception("Error fetching card image in /cardsearch")
             await interaction.edit_original_response(content="❌ Something went wrong.")
 
+    async def _post_card_publicly(self, interaction: discord.Interaction, card: CardInfo) -> None:
+        # Deferred update: no private "loading" message; the followup is a new,
+        # public message in the channel.
+        await interaction.response.defer()
+        try:
+            image_bytes = await self.hs_client.get_card_image_bytes(card.card_id, card.dbf_id)
+            file = discord.File(fp=io.BytesIO(image_bytes), filename=f"{card.card_id}.png")
+            await interaction.followup.send(file=file, ephemeral=False)
+        except Exception:
+            log.exception("Error posting card image for <<name>> lookup")
+            await interaction.followup.send("❌ Something went wrong.", ephemeral=True)
+
     # ── Navigation buttons ─────────────────────────────────────────────
+
+    def _page_view(self, page: int) -> "CardResultsView":
+        return CardResultsView(
+            self.hs_client, self._results, page,
+            self._cost, self._class, self._type, self.name_query,
+            title=self.title, public_pick=self.public_pick,
+        )
 
     @discord.ui.button(label="◀ Prev", style=discord.ButtonStyle.secondary, row=1, disabled=True)
     async def prev_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await interaction.response.defer()
-        new_view = CardResultsView(
-            self.hs_client, self._results, self._page - 1,
-            self._cost, self._class, self._type, self.name_query,
-        )
+        new_view = self._page_view(self._page - 1)
         embed = _build_results_embed(self._results, self._page - 1, self._cost, self._class, self._type)
+        _title_for_query(embed, self)
         await interaction.edit_original_response(embed=embed, view=new_view)
 
     @discord.ui.button(label="▶ Next", style=discord.ButtonStyle.secondary, row=1, disabled=True)
     async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await interaction.response.defer()
-        new_view = CardResultsView(
-            self.hs_client, self._results, self._page + 1,
-            self._cost, self._class, self._type, self.name_query,
-        )
+        new_view = self._page_view(self._page + 1)
         embed = _build_results_embed(self._results, self._page + 1, self._cost, self._class, self._type)
+        _title_for_query(embed, self)
         await interaction.edit_original_response(embed=embed, view=new_view)
 
     @discord.ui.button(label="🔙 New Search", style=discord.ButtonStyle.primary, row=1)
@@ -241,6 +268,169 @@ class CardResultsView(discord.ui.View):
     async def on_timeout(self) -> None:
         for item in self.children:
             item.disabled = True  # type: ignore[union-attr]
+
+
+def _title_for_query(embed: discord.Embed, view: CardResultsView) -> None:
+    """Apply the view's title override (set for <<name>> result lists)."""
+    if view.title is not None:
+        embed.title = view.title
+
+
+# ── <<card name>> lookup (used by auto-detect) ────────────────────────────────
+
+def pick_card_matches(results: list[CardInfo], query: str) -> list[CardInfo]:
+    """
+    Narrow name-search results for a <<query>> lookup: an exact
+    (case-insensitive) name match wins outright, so <<Fireball>> shows
+    Fireball rather than a list that also has Fireball Volley.
+    """
+    q = query.strip().lower()
+    exact = [c for c in results if c.name.lower() == q]
+    return exact[:1] if exact else results
+
+
+# Typo-tolerant fallback, used only when the substring search finds nothing.
+# Scores are difflib ratios (0–1). Tuned on the real card list: typos of real
+# names score ~0.86–0.96, unrelated strings stay around 0.4.
+_FUZZY_CUTOFF = 0.8
+# Keep every candidate within this much of the best score (e.g. "firebal"
+# offers both Fireball and Rolling Fireball).
+_FUZZY_SPREAD = 0.1
+_FUZZY_LIMIT = PAGE_SIZE
+# search_cards limit meaning "no limit" (the collectible DB is ~7k names).
+_ALL_CARDS = 1_000_000
+
+
+def _fuzzy_score(query: str, name: str) -> tuple[float, float]:
+    """
+    (best, whole) similarity of *query* to card *name*: best over the whole name
+    and every run of consecutive name words as long as the query, so a partial
+    query ("triupmh") can match part of a name ("Medivh's Triumph"). *whole* is
+    the whole-name ratio, used to rank "Fireball" above "Rolling Fireball".
+    """
+    q = query.lower()
+    name_l = name.lower()
+    whole = SequenceMatcher(None, q, name_l).ratio()
+    best = whole
+    words = name_l.split()
+    n = max(1, len(q.split()))
+    for i in range(max(1, len(words) - n + 1)):
+        sm = SequenceMatcher(None, q, " ".join(words[i:i + n]))
+        # Cheap upper bounds first; ratio() is the expensive part.
+        if sm.real_quick_ratio() <= best or sm.quick_ratio() <= best:
+            continue
+        best = max(best, sm.ratio())
+    return best, whole
+
+
+def fuzzy_card_matches(cards: list[CardInfo], query: str) -> list[CardInfo]:
+    """Closest cards to a misspelled *query*, best first; [] if nothing is close."""
+    q = " ".join(query.split())
+    if not q:
+        return []
+    scored = [(_fuzzy_score(q, c.name), c) for c in cards]
+    scored = [(s, c) for s, c in scored if s[0] >= _FUZZY_CUTOFF]
+    if not scored:
+        return []
+    top = max(s[0] for s, _ in scored)
+    close = [(s, c) for s, c in scored if s[0] >= top - _FUZZY_SPREAD]
+    close.sort(key=lambda sc: (-sc[0][0], -sc[0][1], sc[1].name))
+    return [c for _, c in close[:_FUZZY_LIMIT]]
+
+
+async def reply_card_lookup(hs_client: HSJsonClient, message: discord.Message, query: str) -> None:
+    """
+    Reply to *message* for a <<query>> card lookup: the card image for a single
+    match, otherwise a prompt whose button opens the /cardsearch results privately.
+    If nothing contains *query*, fall back to the closest names (typo tolerance).
+    """
+    no_pings = discord.AllowedMentions.none()
+    shown_query = discord.utils.escape_markdown(query)
+    results = pick_card_matches(
+        await hs_client.search_cards(name_query=query, limit=MAX_RESULTS), query
+    )
+    fuzzy = False
+    if not results:
+        # No filters: every (name-deduplicated) card.
+        all_cards = await hs_client.search_cards(limit=_ALL_CARDS)
+        # ~0.3 s of CPU over the whole card list — keep it off the event loop.
+        results = await asyncio.to_thread(fuzzy_card_matches, all_cards, query)
+        fuzzy = bool(results)
+    log.info(
+        "card lookup guild=%s channel=%s user=%s query=%r -> %d %sresult(s)",
+        message.guild.id if message.guild else None, message.channel.id,
+        message.author, query, len(results), "fuzzy " if fuzzy else "",
+    )
+
+    if not results:
+        await message.reply(
+            f"🔎 No card found matching **{shown_query}**.",
+            mention_author=False, allowed_mentions=no_pings,
+        )
+        return
+
+    if len(results) == 1:
+        card = results[0]
+        image_bytes = await hs_client.get_card_image_bytes(card.card_id, card.dbf_id)
+        file = discord.File(fp=io.BytesIO(image_bytes), filename=f"{card.card_id}.png")
+        content = (
+            f"🔎 No exact match for **{shown_query}** — did you mean "
+            f"**{discord.utils.escape_markdown(card.name)}**?"
+            if fuzzy else None
+        )
+        await message.reply(
+            content=content, file=file, mention_author=False, allowed_mentions=no_pings,
+        )
+        return
+
+    # Several matches: a channel message can't be ephemeral, so post a one-line
+    # prompt whose button opens the /cardsearch results privately for the clicker.
+    if fuzzy:
+        title = f"🔎 No exact match for “{query}” — did you mean…"
+        prompt = f"🔎 No exact match for **{shown_query}** — {len(results)} similar cards."
+    else:
+        title = f"🔎 Cards matching “{query}”  ({len(results)} found)"
+        prompt = f"🔎 {len(results)} cards match **{shown_query}**."
+    view = ShowMatchesView(hs_client, results, query, title)
+    view.message = await message.reply(
+        prompt, view=view, mention_author=False, allowed_mentions=no_pings,
+    )
+
+
+class ShowMatchesView(discord.ui.View):
+    """
+    Public prompt for a multi-match <<name>> lookup. Each click opens the
+    results list privately (ephemeral) for whoever clicked, like /cardsearch;
+    the card they pick from it is posted publicly.
+    """
+
+    def __init__(
+        self, hs_client: HSJsonClient, results: list[CardInfo], query: str, title: str,
+    ) -> None:
+        super().__init__(timeout=900)
+        self.hs_client = hs_client
+        self._results = results
+        self._query = query
+        self._title = title
+        self.message: Optional[discord.Message] = None
+
+    @discord.ui.button(label="Show matches", emoji="🔎", style=discord.ButtonStyle.primary)
+    async def show_button(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        view = CardResultsView(
+            self.hs_client, self._results, 0, "any", "any", "any", self._query,
+            title=self._title, public_pick=True,
+        )
+        embed = _build_results_embed(self._results, 0, "any", "any", "any")
+        _title_for_query(embed, view)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    async def on_timeout(self) -> None:
+        self.show_button.disabled = True
+        if self.message is not None:
+            try:
+                await self.message.edit(view=self)
+            except discord.HTTPException:
+                pass
 
 
 # ── Filter view (shown initially) ─────────────────────────────────────────────

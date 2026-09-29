@@ -10,10 +10,11 @@ Public API:
     lookup(battletag, region, mode)         -> LeaderboardEntry | None
     get_snapshot(region, mode)              -> (entries, season_id, fetched_at)  — DB only
     refresh_pages(region, mode, max_page)   -> (count, season_id, fetched_at)   — API + upsert
+    prune_refresh_log()                     -> rows deleted                     — audit-log retention
 """
 import logging
 import math
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from bot.services.db import get_db
@@ -21,9 +22,19 @@ from bot.services.leaderboard_client import (
     LeaderboardEntry,
     fetch_leaderboard,
 )
+from bot.services.season_id import invalidate_current_season_id
 from bot.services.season_score import recalculate_season_score
 
 log = logging.getLogger(__name__)
+
+# player_rank_log dedupe: a registered player seen again with the same rank and
+# rating is only re-logged once this much time has passed since their last row
+# (and always on their first observation of the UTC day), so charts still get
+# regular points without a row per player per refresh.
+_RANK_LOG_HEARTBEAT = timedelta(hours=1)
+
+# ldb_refresh_log is a troubleshooting-only audit log; season data lives in ldb_seasons.
+_REFRESH_LOG_RETENTION = timedelta(days=14)
 
 
 async def lookup(
@@ -82,9 +93,14 @@ async def refresh_pages(
     """
     Fetch pages from the Blizzard API and upsert them into ldb_current_entries.
 
-    Also tracks registered players: writes a player_rank_log row whenever a
-    registered battletag appears in a page, and upserts player_daily_best with
-    the best rank seen so far today (UTC).
+    Also tracks registered players: writes a player_rank_log row when a
+    registered battletag appears in a page with a changed rank/rating (or on its
+    first sighting of the UTC day, or after _RANK_LOG_HEARTBEAT), upserts
+    player_daily_dps with the best rank seen so far today (UTC), and
+    recalculates the season score of every player seen, once per run.
+
+    Each run is recorded in ldb_seasons (first/last refresh time of the season)
+    and in the ldb_refresh_log audit log.
 
     Pages are written as they arrive — no staging/promotion step. A failed
     page is skipped and its existing rows remain from the previous run.
@@ -108,6 +124,11 @@ async def refresh_pages(
                 region.upper(),
             )
         }
+        # Last player_rank_log row per registered battletag: (rank, rating, observed_at).
+        # Seeded from today's rows in on_started, kept current as rows are written.
+        last_logged: dict[str, tuple[int, Optional[int], datetime]] = {}
+        # Battletags seen this run; their season scores are recalculated at the end.
+        touched: set[str] = set()
 
         async def on_started(season_id: int) -> None:
             nonlocal current_season_id
@@ -125,6 +146,35 @@ async def refresh_pages(
                 "DELETE FROM ldb_current_entries "
                 "WHERE region = $1 AND mode = $2 AND season_id != $3",
                 region.upper(), mode.lower(), season_id,
+            )
+            invalidate_current_season_id(region, mode)
+
+            if registered:
+                today_start = datetime.now(timezone.utc).replace(
+                    hour=0, minute=0, second=0, microsecond=0
+                )
+                for row in await conn.fetch(
+                    """
+                    SELECT DISTINCT ON (battletag) battletag, rank, rating, observed_at
+                    FROM player_rank_log
+                    WHERE region = $1 AND mode = $2 AND season_id = $3
+                      AND observed_at >= $4
+                    ORDER BY battletag, observed_at DESC
+                    """,
+                    region.upper(), mode.lower(), season_id, today_start,
+                ):
+                    last_logged[row["battletag"]] = (row["rank"], row["rating"], row["observed_at"])
+
+        def should_log(battletag: str, entry: LeaderboardEntry, now: datetime) -> bool:
+            prev = last_logged.get(battletag)
+            if prev is None:
+                return True
+            prev_rank, prev_rating, prev_at = prev
+            return (
+                prev_rank != entry.rank
+                or prev_rating != entry.rating
+                or prev_at.date() != now.date()
+                or now - prev_at >= _RANK_LOG_HEARTBEAT
             )
 
         async def on_page(page: int, raw_rows: list[dict]) -> None:
@@ -157,82 +207,78 @@ async def refresh_pages(
             log.debug("%s/%s page %d — upserted %d rows", region, mode, page, len(page_entries))
 
             # ── Track registered players found in this page ───────────────────
-            if not registered:
+            matches = [
+                (registered[e.battletag], e)
+                for e in page_entries
+                if e.battletag in registered
+            ]
+            if not matches:
                 return
-            for entry in page_entries:
-                battletag = registered.get(entry.battletag)
-                if battletag is None:
-                    continue
+
+            legend_count = await conn.fetchval(
+                "SELECT COUNT(*) FROM ldb_current_entries "
+                "WHERE region = $1 AND mode = $2 AND season_id = $3",
+                region.upper(), mode.lower(), current_season_id,
+            )
+
+            rank_log_rows = []
+            daily_dps_rows = []
+            for battletag, entry in matches:
                 log.debug(
                     "Tracked registered player %s at rank #%d (%s/%s)",
                     entry.battletag_orig, entry.rank, region, mode,
                 )
-                await conn.execute(
-                    """
-                    INSERT INTO player_rank_log
-                        (battletag, region, mode, season_id, rank, rating, observed_at)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7)
-                    """,
-                    battletag, region.upper(), mode.lower(),
-                    current_season_id, entry.rank, entry.rating, now,
-                )
-                await conn.execute(
-                    """
-                    INSERT INTO player_daily_best
-                        (battletag, region, mode, season_id, date_utc, best_rank, updated_at)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7)
-                    ON CONFLICT (battletag, region, mode, season_id, date_utc) DO UPDATE SET
-                        best_rank  = LEAST(player_daily_best.best_rank, EXCLUDED.best_rank),
-                        updated_at = CASE
-                            WHEN EXCLUDED.best_rank < player_daily_best.best_rank
-                            THEN EXCLUDED.updated_at
-                            ELSE player_daily_best.updated_at
-                        END
-                    """,
-                    battletag, region.upper(), mode.lower(),
-                    current_season_id, date_utc, entry.rank, now,
-                )
-
-                legend_count = await conn.fetchval(
-                    "SELECT COUNT(*) FROM ldb_current_entries "
-                    "WHERE region = $1 AND mode = $2 AND season_id = $3",
-                    region.upper(), mode.lower(), current_season_id,
-                )
+                if should_log(battletag, entry, now):
+                    rank_log_rows.append((
+                        battletag, region.upper(), mode.lower(),
+                        current_season_id, entry.rank, entry.rating, now,
+                    ))
+                    last_logged[battletag] = (entry.rank, entry.rating, now)
                 best_rank = entry.rank
                 dps = (
                     math.log10(legend_count) * ((legend_count - best_rank + 1) / legend_count) * 100
                     if legend_count > 0 else 0.0
                 )
-                await conn.execute(
-                    """
-                    INSERT INTO player_daily_dps
-                        (battletag, region, mode, season_id, date_utc, dps, best_rank, legend_count, updated_at)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-                    ON CONFLICT (battletag, region, mode, season_id, date_utc) DO UPDATE SET
-                        best_rank    = LEAST(player_daily_dps.best_rank, EXCLUDED.best_rank),
-                        dps          = CASE
-                            WHEN EXCLUDED.best_rank < player_daily_dps.best_rank
-                            THEN EXCLUDED.dps
-                            ELSE player_daily_dps.dps
-                        END,
-                        legend_count = CASE
-                            WHEN EXCLUDED.best_rank < player_daily_dps.best_rank
-                            THEN EXCLUDED.legend_count
-                            ELSE player_daily_dps.legend_count
-                        END,
-                        updated_at   = CASE
-                            WHEN EXCLUDED.best_rank < player_daily_dps.best_rank
-                            THEN EXCLUDED.updated_at
-                            ELSE player_daily_dps.updated_at
-                        END
-                    """,
+                daily_dps_rows.append((
                     battletag, region.upper(), mode.lower(),
                     current_season_id, date_utc, dps, best_rank, legend_count, now,
-                )
+                ))
+                touched.add(battletag)
 
-                await recalculate_season_score(
-                    battletag, region.upper(), mode.lower(), current_season_id
+            if rank_log_rows:
+                await conn.executemany(
+                    """
+                    INSERT INTO player_rank_log
+                        (battletag, region, mode, season_id, rank, rating, observed_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    """,
+                    rank_log_rows,
                 )
+            await conn.executemany(
+                """
+                INSERT INTO player_daily_dps
+                    (battletag, region, mode, season_id, date_utc, dps, best_rank, legend_count, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                ON CONFLICT (battletag, region, mode, season_id, date_utc) DO UPDATE SET
+                    best_rank    = LEAST(player_daily_dps.best_rank, EXCLUDED.best_rank),
+                    dps          = CASE
+                        WHEN EXCLUDED.best_rank < player_daily_dps.best_rank
+                        THEN EXCLUDED.dps
+                        ELSE player_daily_dps.dps
+                    END,
+                    legend_count = CASE
+                        WHEN EXCLUDED.best_rank < player_daily_dps.best_rank
+                        THEN EXCLUDED.legend_count
+                        ELSE player_daily_dps.legend_count
+                    END,
+                    updated_at   = CASE
+                        WHEN EXCLUDED.best_rank < player_daily_dps.best_rank
+                        THEN EXCLUDED.updated_at
+                        ELSE player_daily_dps.updated_at
+                    END
+                """,
+                daily_dps_rows,
+            )
 
         async def on_page_error(page: int) -> None:
             log.warning(
@@ -240,18 +286,44 @@ async def refresh_pages(
                 region, mode, page,
             )
 
-        _, season_id = await fetch_leaderboard(
-            region, mode,
-            on_started=on_started,
-            on_page=on_page,
-            on_page_error=on_page_error,
-            max_page=max_page,
-        )
+        try:
+            _, season_id = await fetch_leaderboard(
+                region, mode,
+                on_started=on_started,
+                on_page=on_page,
+                on_page_error=on_page_error,
+                max_page=max_page,
+            )
+        finally:
+            # Runs even if the fetch failed mid-way, so daily_dps rows written
+            # before the failure are reflected in season scores.
+            for battletag in touched:
+                try:
+                    await recalculate_season_score(
+                        conn, battletag, region.upper(), mode.lower(), current_season_id
+                    )
+                except Exception:
+                    log.exception(
+                        "Season score recalculation failed for %s %s/%s",
+                        battletag, region, mode,
+                    )
 
-        # ── Write refresh audit log ───────────────────────────────────────────
+        # ── Record the run: season table + refresh audit log ──────────────────
         legend_count = await conn.fetchval(
             "SELECT COUNT(*) FROM ldb_current_entries WHERE region = $1 AND mode = $2",
             region.upper(), mode.lower(),
+        )
+        completed_at = datetime.now(timezone.utc)
+        await conn.execute(
+            """
+            INSERT INTO ldb_seasons
+                (region, mode, season_id, first_refresh_at, last_refresh_at, legend_count)
+            VALUES ($1, $2, $3, $4, $4, $5)
+            ON CONFLICT (region, mode, season_id) DO UPDATE SET
+                last_refresh_at = EXCLUDED.last_refresh_at,
+                legend_count    = EXCLUDED.legend_count
+            """,
+            region.upper(), mode.lower(), current_season_id, completed_at, legend_count,
         )
         await conn.execute(
             """
@@ -261,7 +333,7 @@ async def refresh_pages(
             """,
             region.upper(), mode.lower(), current_season_id,
             legend_count, max_page is None,
-            datetime.now(timezone.utc),
+            completed_at,
         )
 
     log.info(
@@ -269,6 +341,16 @@ async def refresh_pages(
         region, mode, max_page or "all", rows_written, season_id,
     )
     return rows_written, season_id, fetched_at
+
+
+async def prune_refresh_log() -> int:
+    """Delete ldb_refresh_log rows older than _REFRESH_LOG_RETENTION. Returns the count."""
+    async with get_db() as conn:
+        status = await conn.execute(
+            "DELETE FROM ldb_refresh_log WHERE completed_at < $1",
+            datetime.now(timezone.utc) - _REFRESH_LOG_RETENTION,
+        )
+    return int(status.split()[-1])
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
