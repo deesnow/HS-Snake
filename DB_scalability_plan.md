@@ -40,8 +40,16 @@ Done:
 - P3 indexes `idx_pss_region_season_score` and `idx_ub_region_btag`. `resolve_current_season_id` has a 60 s cache, invalidated when a refresh starts.
 - P4 port 5432 is published only in `docker-compose.dev.yml`. DB credentials come from `.env` (`${POSTGRES_*:-default}`).
 
+Schema cleanup (2026-09-29), run once at startup and tracked in `schema_migrations`:
+- Dropped `player_daily_best`: nothing read it, and it duplicated `player_daily_dps.best_rank`.
+- New table `ldb_seasons`, one row per season, is now the season-month source. `ldb_refresh_log` keeps only 14 days (`prune_refresh_log`, run after each full refresh).
+- `player_rank_log` compacted with zero risk: only rows inside same-day runs of identical readings, older than yesterday, were deleted. Per-day values and all 375 chart images were checked identical before and after. The unused `id` column was dropped.
+- Retired the old one-off migrations (`ldb_snapshots`, discord_id→battletag, the column-type normalizer). `CREATE TABLE` now declares TIMESTAMPTZ directly.
+- Local DB: 172 MB → 77 MB.
+
 Not done yet:
 - P1.3 (c) retention: this deletes history, so it needs a decision on how many seasons to keep, because charts accept old season numbers.
+- Same-name clash: two leaderboard players who share a name both match one registered BattleTag, because the leaderboard has no `#tag`. There are 102 such same-timestamp pairs in `player_rank_log`.
 - P3 `/glb` `discord_id = ANY(...)` filter (optional).
 - P4 backups, Postgres tuning, and the multi-process shard note.
 

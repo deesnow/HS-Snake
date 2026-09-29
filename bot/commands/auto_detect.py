@@ -7,7 +7,8 @@ Deck detection pipeline
 1. Regex scan  — find base64-like token(s) in message text
 2. Base64 test — must decode cleanly to bytes
 3. Deck parse  — hearthstone library must parse it as a valid deck
-4. Reply       — same format as /deck command
+4. Reply       — per the guild's /botadmin decktype: card list (as /deck, the
+                 default) or deck image (as /deckimage)
 
 Card lookup
 -----------
@@ -108,6 +109,27 @@ class AutoDetectCog(commands.Cog):
                 log.warning("Also failed to edit pending message in channel %s", message.channel.id)
             return False
 
+    async def _reply_auto_deck_image(self, message: discord.Message, deck) -> bool:
+        """
+        Auto-detect reply in deck-image mode: same output as /deckimage.
+        Returns False on failure so the caller falls back to the card list.
+        """
+        try:
+            image_bytes = await self.image_gen.generate_deck_image(deck)
+            file = discord.File(fp=image_bytes, filename="deck.png")
+            await message.reply(
+                content=f"**{deck.hero_class}** — {deck.format_label}  ·  {deck.total_cards} cards",
+                file=file,
+                mention_author=False,
+            )
+            return True
+        except Exception:
+            log.warning(
+                "Auto-detect deck image failed in channel %s, falling back to card list",
+                message.channel.id, exc_info=True,
+            )
+            return False
+
     async def _reply_card_lookups(self, message: discord.Message, queries: list[str]) -> None:
         for query in queries:
             try:
@@ -172,8 +194,10 @@ class AutoDetectCog(commands.Cog):
             except Exception:
                 continue
 
-            log.info("auto-detect deck code in guild=%s channel=%s user=%s code=%.40s", message.guild.id, message.channel.id, message.author, token)
-            # Step 4 — reply in the same channel
+            log.info("auto-detect deck code in guild=%s channel=%s user=%s display=%s code=%.40s", message.guild.id, message.channel.id, message.author, cfg.deck_display, token)
+            # Step 4 — reply in the same channel, as the guild's /botadmin decktype says
+            if cfg.deck_display == gs.DECK_DISPLAY_IMAGE and await self._reply_auto_deck_image(message, deck):
+                break
             text = build_simple_deck_text(deck, token)
             try:
                 await message.reply(text, mention_author=False)

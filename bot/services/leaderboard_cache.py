@@ -10,6 +10,7 @@ Public API:
     lookup(battletag, region, mode)         -> LeaderboardEntry | None
     get_snapshot(region, mode)              -> (entries, season_id, fetched_at)  — DB only
     refresh_pages(region, mode, max_page)   -> (count, season_id, fetched_at)   — API + upsert
+    prune_refresh_log()                     -> rows deleted                     — audit-log retention
 """
 import logging
 import math
@@ -31,6 +32,9 @@ log = logging.getLogger(__name__)
 # (and always on their first observation of the UTC day), so charts still get
 # regular points without a row per player per refresh.
 _RANK_LOG_HEARTBEAT = timedelta(hours=1)
+
+# ldb_refresh_log is a troubleshooting-only audit log; season data lives in ldb_seasons.
+_REFRESH_LOG_RETENTION = timedelta(days=14)
 
 
 async def lookup(
@@ -92,8 +96,11 @@ async def refresh_pages(
     Also tracks registered players: writes a player_rank_log row when a
     registered battletag appears in a page with a changed rank/rating (or on its
     first sighting of the UTC day, or after _RANK_LOG_HEARTBEAT), upserts
-    player_daily_best / player_daily_dps with the best rank seen so far today
-    (UTC), and recalculates the season score of every player seen, once per run.
+    player_daily_dps with the best rank seen so far today (UTC), and
+    recalculates the season score of every player seen, once per run.
+
+    Each run is recorded in ldb_seasons (first/last refresh time of the season)
+    and in the ldb_refresh_log audit log.
 
     Pages are written as they arrive — no staging/promotion step. A failed
     page is skipped and its existing rows remain from the previous run.
@@ -215,7 +222,6 @@ async def refresh_pages(
             )
 
             rank_log_rows = []
-            daily_best_rows = []
             daily_dps_rows = []
             for battletag, entry in matches:
                 log.debug(
@@ -228,10 +234,6 @@ async def refresh_pages(
                         current_season_id, entry.rank, entry.rating, now,
                     ))
                     last_logged[battletag] = (entry.rank, entry.rating, now)
-                daily_best_rows.append((
-                    battletag, region.upper(), mode.lower(),
-                    current_season_id, date_utc, entry.rank, now,
-                ))
                 best_rank = entry.rank
                 dps = (
                     math.log10(legend_count) * ((legend_count - best_rank + 1) / legend_count) * 100
@@ -252,21 +254,6 @@ async def refresh_pages(
                     """,
                     rank_log_rows,
                 )
-            await conn.executemany(
-                """
-                INSERT INTO player_daily_best
-                    (battletag, region, mode, season_id, date_utc, best_rank, updated_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
-                ON CONFLICT (battletag, region, mode, season_id, date_utc) DO UPDATE SET
-                    best_rank  = LEAST(player_daily_best.best_rank, EXCLUDED.best_rank),
-                    updated_at = CASE
-                        WHEN EXCLUDED.best_rank < player_daily_best.best_rank
-                        THEN EXCLUDED.updated_at
-                        ELSE player_daily_best.updated_at
-                    END
-                """,
-                daily_best_rows,
-            )
             await conn.executemany(
                 """
                 INSERT INTO player_daily_dps
@@ -321,10 +308,22 @@ async def refresh_pages(
                         battletag, region, mode,
                     )
 
-        # ── Write refresh audit log ───────────────────────────────────────────
+        # ── Record the run: season table + refresh audit log ──────────────────
         legend_count = await conn.fetchval(
             "SELECT COUNT(*) FROM ldb_current_entries WHERE region = $1 AND mode = $2",
             region.upper(), mode.lower(),
+        )
+        completed_at = datetime.now(timezone.utc)
+        await conn.execute(
+            """
+            INSERT INTO ldb_seasons
+                (region, mode, season_id, first_refresh_at, last_refresh_at, legend_count)
+            VALUES ($1, $2, $3, $4, $4, $5)
+            ON CONFLICT (region, mode, season_id) DO UPDATE SET
+                last_refresh_at = EXCLUDED.last_refresh_at,
+                legend_count    = EXCLUDED.legend_count
+            """,
+            region.upper(), mode.lower(), current_season_id, completed_at, legend_count,
         )
         await conn.execute(
             """
@@ -334,7 +333,7 @@ async def refresh_pages(
             """,
             region.upper(), mode.lower(), current_season_id,
             legend_count, max_page is None,
-            datetime.now(timezone.utc),
+            completed_at,
         )
 
     log.info(
@@ -342,6 +341,16 @@ async def refresh_pages(
         region, mode, max_page or "all", rows_written, season_id,
     )
     return rows_written, season_id, fetched_at
+
+
+async def prune_refresh_log() -> int:
+    """Delete ldb_refresh_log rows older than _REFRESH_LOG_RETENTION. Returns the count."""
+    async with get_db() as conn:
+        status = await conn.execute(
+            "DELETE FROM ldb_refresh_log WHERE completed_at < $1",
+            datetime.now(timezone.utc) - _REFRESH_LOG_RETENTION,
+        )
+    return int(status.split()[-1])
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────

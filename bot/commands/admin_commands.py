@@ -74,6 +74,25 @@ class AdminCommands(commands.Cog):
             f"✅ Automatic deck detection is now {state}.", ephemeral=True
         )
 
+    # ── /botadmin decktype ────────────────────────────────────────────
+
+    @admin.command(name="decktype", description="Choose how automatically detected deck codes are shown.")
+    @app_commands.describe(display="deck-image = rendered image (/deckimage), deck-list = card list (/deck)")
+    @app_commands.choices(display=[
+        app_commands.Choice(name="deck-image", value=gs.DECK_DISPLAY_IMAGE),
+        app_commands.Choice(name="deck-list",  value=gs.DECK_DISPLAY_LIST),
+    ])
+    async def decktype(self, interaction: discord.Interaction, display: app_commands.Choice[str]) -> None:
+        settings = await gs.load(interaction.guild_id)
+        if not _is_admin(interaction, settings):
+            await interaction.response.send_message("❌ You don't have permission to change bot settings.", ephemeral=True)
+            return
+        await gs.set_deck_display(interaction.guild_id, display.value)
+        log.info("/botadmin decktype guild=%s user=%s display=%s", interaction.guild_id, interaction.user, display.value)
+        await interaction.response.send_message(
+            f"✅ Detected deck codes will now be shown as **{display.name}**.", ephemeral=True
+        )
+
     # ── /botadmin channels ────────────────────────────────────────────
 
     @admin.command(name="allchannels", description="Monitor all text channels (overrides individual channel settings).")
@@ -135,6 +154,8 @@ class AdminCommands(commands.Cog):
         embed = discord.Embed(title="HS-Snake — Server Configuration", colour=0x1A1A2E)
         embed.add_field(name="Admin Role",         value=admin_role,    inline=False)
         embed.add_field(name="Auto-Detect",        value=detect_state,  inline=True)
+        deck_type = "deck-image" if cfg.deck_display == gs.DECK_DISPLAY_IMAGE else "deck-list"
+        embed.add_field(name="Deck Display",       value=deck_type,     inline=True)
         embed.add_field(name="Monitored Channels", value=scope,         inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 

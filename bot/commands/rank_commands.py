@@ -146,6 +146,11 @@ class RankCommands(commands.Cog):
                 log.exception("Full refresh failed for %s/%s", region, mode)
 
         await asyncio.gather(*(fetch_and_log(r, m) for r, m in _WARM_COMBOS))
+        try:
+            pruned = await leaderboard_cache.prune_refresh_log()
+            log.debug("Pruned %d old ldb_refresh_log rows", pruned)
+        except Exception:
+            log.exception("Pruning ldb_refresh_log failed")
         self._full_refresh_running = False
         if not getattr(self, "_quick_refresh_started", False):
             self._quick_refresh.start()

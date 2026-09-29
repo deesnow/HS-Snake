@@ -81,7 +81,7 @@ async def resolve_days_in_month(conn, region, mode, season_id):
     """
     Days in the calendar month a season falls in (seasons are calendar months).
     Thin wrapper over season_id.resolve_season_month, which derives the month
-    from the global ldb_refresh_log table rather than a specific player's data —
+    from the global ldb_seasons table rather than a specific player's data —
     so this works even for a player with zero Legend observations that season.
     """
     month_start = await resolve_season_month(conn, region, mode, season_id)

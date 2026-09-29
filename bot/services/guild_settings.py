@@ -11,6 +11,11 @@ from typing import Optional
 
 from bot.services.db import get_db
 
+# How auto-detected deck codes are shown.
+DECK_DISPLAY_LIST = "list"    # simple card list, same as /deck
+DECK_DISPLAY_IMAGE = "image"  # rendered deck image, same as /deckimage
+DECK_DISPLAYS = (DECK_DISPLAY_LIST, DECK_DISPLAY_IMAGE)
+
 
 @dataclass
 class GuildSettings:
@@ -18,6 +23,7 @@ class GuildSettings:
     admin_role_id: Optional[int] = None
     auto_detect: bool = False
     all_channels: bool = False
+    deck_display: str = DECK_DISPLAY_LIST
     monitored_channels: list[int] = field(default_factory=list)
 
 
@@ -63,6 +69,7 @@ async def _load_from_db(guild_id: int) -> GuildSettings:
         admin_role_id=row["admin_role_id"],
         auto_detect=bool(row["auto_detect"]),
         all_channels=bool(row["all_channels"]),
+        deck_display=row["deck_display"],
         monitored_channels=channels,
     )
 
@@ -96,6 +103,19 @@ async def set_all_channels(guild_id: int, enabled: bool) -> None:
                VALUES ($1, $2)
                ON CONFLICT (guild_id) DO UPDATE SET all_channels = EXCLUDED.all_channels""",
             guild_id, int(enabled),
+        )
+    _invalidate(guild_id)
+
+
+async def set_deck_display(guild_id: int, deck_display: str) -> None:
+    if deck_display not in DECK_DISPLAYS:
+        raise ValueError(f"deck_display must be one of {DECK_DISPLAYS}, got {deck_display!r}")
+    async with get_db() as conn:
+        await conn.execute(
+            """INSERT INTO guild_settings (guild_id, deck_display)
+               VALUES ($1, $2)
+               ON CONFLICT (guild_id) DO UPDATE SET deck_display = EXCLUDED.deck_display""",
+            guild_id, deck_display,
         )
     _invalidate(guild_id)
 
