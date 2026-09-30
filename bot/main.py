@@ -13,7 +13,7 @@ from discord.ext import commands
 
 from bot.config import settings
 
-__version__ = os.getenv("BOT_VERSION", "dev")
+__version__ = os.getenv("BOT_VERSION", "dev").removeprefix("v")
 
 _log_handlers: list[logging.Handler] = [logging.StreamHandler()]
 if settings.log_file:
