@@ -32,6 +32,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # full history + tags, needed by git describe
+
+      # Tag build → "1.0.0"; branch build → "1.0.0-3-gc1ef625" (3 commits past v1.0.0).
+      # metadata-action's `version` output can't be used: on branch pushes it is "latest".
+      - name: Compute bot version
+        id: version
+        run: |
+          v=$(git describe --tags --match 'v[0-9]*.[0-9]*.[0-9]*' --always)
+          echo "value=${v#v}" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
@@ -61,4 +71,4 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            BOT_VERSION=${{ steps.meta.outputs.version }}
+            BOT_VERSION=${{ steps.version.outputs.value }}
