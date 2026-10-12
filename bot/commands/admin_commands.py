@@ -6,6 +6,7 @@ All subcommands require the user to hold the configured admin role
 /botadmin setrole itself is restricted to server administrators.
 """
 import logging
+from typing import Union
 
 import discord
 from discord import app_commands
@@ -117,8 +118,8 @@ class AdminCommands(commands.Cog):
         )
 
     @admin.command(name="addchannel", description="Add a channel to the deck-detection watch list.")
-    @app_commands.describe(channel="Text channel to monitor")
-    async def addchannel(self, interaction: discord.Interaction, channel: discord.TextChannel) -> None:
+    @app_commands.describe(channel="Text or forum channel to monitor (forums cover all their posts)")
+    async def addchannel(self, interaction: discord.Interaction, channel: Union[discord.TextChannel, discord.ForumChannel]) -> None:
         settings = await gs.load(interaction.guild_id)
         if not _is_admin(interaction, settings):
             await interaction.response.send_message("❌ You don't have permission to change bot settings.", ephemeral=True)
@@ -129,8 +130,8 @@ class AdminCommands(commands.Cog):
         )
 
     @admin.command(name="removechannel", description="Remove a channel from the deck-detection watch list.")
-    @app_commands.describe(channel="Text channel to remove")
-    async def removechannel(self, interaction: discord.Interaction, channel: discord.TextChannel) -> None:
+    @app_commands.describe(channel="Text or forum channel to remove")
+    async def removechannel(self, interaction: discord.Interaction, channel: Union[discord.TextChannel, discord.ForumChannel]) -> None:
         settings = await gs.load(interaction.guild_id)
         if not _is_admin(interaction, settings):
             await interaction.response.send_message("❌ You don't have permission to change bot settings.", ephemeral=True)

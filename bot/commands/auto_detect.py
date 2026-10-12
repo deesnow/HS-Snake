@@ -173,7 +173,12 @@ class AutoDetectCog(commands.Cog):
             return
 
         # Channel scope check
-        if not cfg.all_channels and message.channel.id not in cfg.monitored_channels:
+        # Threads (incl. forum posts) inherit the setting of their parent channel.
+        parent_id = getattr(message.channel, "parent_id", None)
+        if not cfg.all_channels and not (
+            message.channel.id in cfg.monitored_channels
+            or (parent_id is not None and parent_id in cfg.monitored_channels)
+        ):
             return
 
         await self._reply_card_lookups(message, card_queries)
