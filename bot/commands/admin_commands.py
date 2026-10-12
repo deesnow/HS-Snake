@@ -3,6 +3,7 @@
 
 All subcommands require the user to hold the configured admin role
 (or be the server owner / have Administrator permission).
+/botadmin setrole itself is restricted to server administrators.
 """
 import logging
 
@@ -39,7 +40,10 @@ class AdminCommands(commands.Cog):
     admin = app_commands.Group(
         name="botadmin",
         description="Configure HS-Snake bot settings for this server.",
-        default_permissions=discord.Permissions(administrator=True),
+        # No default_permissions: Discord would hide the command from everyone
+        # without Administrator, including holders of the configured admin role.
+        # Access is enforced per subcommand by _is_admin().
+        guild_only=True,
     )
 
     # ── /botadmin setrole ─────────────────────────────────────────────
