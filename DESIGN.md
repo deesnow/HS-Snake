@@ -685,7 +685,7 @@ The Docker image is built and tagged by the CI pipeline (`.github/workflows/dock
 | Push to `rc` branch | `:rc` |
 | Git tag `v0.5.1` | `:v0.5.1`, `:0.5`, `:latest` |
 
-The git tag version is injected as a Docker build arg (`BOT_VERSION`) and baked into the image as an env var. The bot reads it via `os.getenv("BOT_VERSION", "dev")` and displays it in the Discord presence and startup log.
+CI computes the version with `git describe --tags --match 'v*.*.*'` (leading `v` stripped): a tag build yields `1.0.0`, a branch build yields e.g. `1.0.0-3-gc1ef625` (3 commits past `v1.0.0`). It is injected as a Docker build arg (`BOT_VERSION`) and baked into the image as an env var. The bot reads it via `os.getenv("BOT_VERSION", "dev")` and displays it in the Discord presence and startup log.
 
 ### docker-compose.yml (summary)
 
