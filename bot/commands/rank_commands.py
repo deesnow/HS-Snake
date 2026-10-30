@@ -18,7 +18,7 @@ from discord.ext import commands, tasks
 
 from datetime import date, datetime, timedelta, timezone
 
-from bot.services import leaderboard_cache, rank_chart, rank_tracker_data
+from bot.services import leaderboard_cache, rank_chart, rank_tracker_data, tracker_ingest
 from bot.services.db import get_db
 from bot.services.leaderboard_client import LeaderboardEntry
 from bot.services.rank_scale import AxisMapper
@@ -108,10 +108,26 @@ class RankCommands(commands.Cog):
         self._full_refresh_running = False
         self._quick_refresh_started = False
         self._full_refresh.start()
+        self._tracker_ingest.start()
 
     async def cog_unload(self) -> None:
         self._quick_refresh.cancel()
         self._full_refresh.cancel()
+        self._tracker_ingest.cancel()
+
+    @tasks.loop(minutes=1)
+    async def _tracker_ingest(self) -> None:
+        """Fold plugin-uploaded matches into player_rank_log / daily DPS / season score."""
+        try:
+            await tracker_ingest.ingest_recent_matches()
+        except asyncpg.exceptions.UndefinedTableError:
+            log.warning("rank_tracker_matches not available yet — skipping tracker ingest")
+        except Exception:
+            log.exception("Tracker ingest failed")
+
+    @_tracker_ingest.before_loop
+    async def _before_tracker_ingest(self) -> None:
+        await self.bot.wait_until_ready()
 
     # ── Background refresh tasks ──────────────────────────────────────────────
 
