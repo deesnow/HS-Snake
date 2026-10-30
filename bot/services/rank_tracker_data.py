@@ -46,10 +46,17 @@ async def fetch_tracker_points(conn, battletag, region, mode, start, end):
         """,
         battletag, region.upper(), mode, start, end,
     )
+    # Legend ranks come from player_rank_log only (the leaderboard scrape plus
+    # tracker_ingest, which folds these same rows in) — the single source /rank,
+    # /rankchart and /rcc all share. Emitting Legend points here too would
+    # double-count them, so only sub-Legend states (which player_rank_log
+    # can't hold) are returned.
     points = []
     for row in rows:
-        points.append((row["start_time"], row["star_level"], row["stars"], row["legend_rank"]))
-        points.append((row["end_time"], row["star_level_after"], row["stars_after"], row["legend_rank_after"]))
+        if not row["legend_rank"]:
+            points.append((row["start_time"], row["star_level"], row["stars"], row["legend_rank"]))
+        if not row["legend_rank_after"]:
+            points.append((row["end_time"], row["star_level_after"], row["stars_after"], row["legend_rank_after"]))
     return points
 
 
