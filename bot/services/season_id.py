@@ -3,7 +3,7 @@ Helpers for resolving leaderboard season IDs across month rollover.
 """
 import time
 from calendar import monthrange
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional, Tuple
 
 # resolve_current_season_id runs on every /rank, /glb and chart call, but the
@@ -115,7 +115,10 @@ async def resolve_season_month(conn, region: str, mode: str, season_id: int) -> 
     if completed_at is None:
         completed_at = datetime.now(timezone.utc)
 
-    return completed_at.date().replace(day=1)
+    # Seasons roll over at the start of a UTC-ish month, but the first refresh can
+    # land hours *before* it (e.g. 23:50 UTC on the 30th, or AP's local midnight),
+    # which would put the season in the previous month. Shift by half a day.
+    return (completed_at + timedelta(hours=12)).date().replace(day=1)
 
 
 async def resolve_season_month_range(

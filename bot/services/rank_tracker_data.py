@@ -48,8 +48,8 @@ async def fetch_tracker_points(conn, battletag, region, mode, start, end):
     )
     # Legend points are returned too: tracker_ingest only folds *today's*
     # matches into player_rank_log, so earlier Legend matches (bot offline,
-    # plugin uploaded later) exist only here. merge_with_rank_log drops the ones
-    # player_rank_log already holds.
+    # plugin uploaded later) exist only here. merge_with_rank_log keeps them only
+    # for days player_rank_log has no observation.
     points = []
     for row in rows:
         points.append((row["start_time"], row["star_level"], row["stars"], row["legend_rank"]))
@@ -69,11 +69,14 @@ def merge_with_rank_log(rank_log_points, tracker_points):
     fetch_tracker_points (any league, via rank_scale.classify).
     """
     merged = [(ts, RankPoint(kind="legend", ordinal=rank)) for ts, rank in rank_log_points]
-    logged = set(rank_log_points)  # (timestamp, rank) already present — skip duplicates
+    # The leaderboard scrape is authoritative for Legend rank; the in-game rank a
+    # tracker match reports can differ from it. So tracker Legend points only fill
+    # UTC days that have no player_rank_log observation at all.
+    logged_days = {ts.astimezone(timezone.utc).date() for ts, _ in rank_log_points}
     merged += [
         (ts, classify(star_level, stars, legend_rank))
         for ts, star_level, stars, legend_rank in tracker_points
-        if not legend_rank or (ts, legend_rank) not in logged
+        if not legend_rank or ts.astimezone(timezone.utc).date() not in logged_days
     ]
     merged.sort(key=lambda item: item[0])
     return merged
