@@ -514,6 +514,13 @@ class RankCommands(commands.Cog):
 
                 mapper = AxisMapper([point for _, point in merged])
                 daily = rank_tracker_data.aggregate_by_day(merged, mapper)
+                # Legend players get a flat candle for days with no logged change,
+                # up to today (or season end for past seasons).
+                last_day = min(
+                    datetime.now(timezone.utc).date(),
+                    (next_month_start - timedelta(days=1)).date(),
+                )
+                daily = rank_tracker_data.fill_legend_gaps(daily, merged, last_day)
                 candles = [
                     {"day": day.day, "open": ohlc.open, "close": ohlc.close,
                      "low": ohlc.low, "high": ohlc.high}

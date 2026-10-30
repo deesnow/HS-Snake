@@ -12,7 +12,7 @@ rationale (an earlier day-exclusive design was rejected).
 """
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Sequence
 
 from bot.services.rank_scale import AxisMapper, RankPoint, classify
@@ -46,17 +46,14 @@ async def fetch_tracker_points(conn, battletag, region, mode, start, end):
         """,
         battletag, region.upper(), mode, start, end,
     )
-    # Legend ranks come from player_rank_log only (the leaderboard scrape plus
-    # tracker_ingest, which folds these same rows in) — the single source /rank,
-    # /rankchart and /rcc all share. Emitting Legend points here too would
-    # double-count them, so only sub-Legend states (which player_rank_log
-    # can't hold) are returned.
+    # Legend points are returned too: tracker_ingest only folds *today's*
+    # matches into player_rank_log, so earlier Legend matches (bot offline,
+    # plugin uploaded later) exist only here. merge_with_rank_log drops the ones
+    # player_rank_log already holds.
     points = []
     for row in rows:
-        if not row["legend_rank"]:
-            points.append((row["start_time"], row["star_level"], row["stars"], row["legend_rank"]))
-        if not row["legend_rank_after"]:
-            points.append((row["end_time"], row["star_level_after"], row["stars_after"], row["legend_rank_after"]))
+        points.append((row["start_time"], row["star_level"], row["stars"], row["legend_rank"]))
+        points.append((row["end_time"], row["star_level_after"], row["stars_after"], row["legend_rank_after"]))
     return points
 
 
@@ -72,12 +69,46 @@ def merge_with_rank_log(rank_log_points, tracker_points):
     fetch_tracker_points (any league, via rank_scale.classify).
     """
     merged = [(ts, RankPoint(kind="legend", ordinal=rank)) for ts, rank in rank_log_points]
+    logged = set(rank_log_points)  # (timestamp, rank) already present — skip duplicates
     merged += [
         (ts, classify(star_level, stars, legend_rank))
         for ts, star_level, stars, legend_rank in tracker_points
+        if not legend_rank or (ts, legend_rank) not in logged
     ]
     merged.sort(key=lambda item: item[0])
     return merged
+
+
+def fill_legend_gaps(
+    daily: "dict[date, DayOHLC]",
+    merged_points: Sequence[tuple[datetime, RankPoint]],
+    last_day: date,
+) -> "dict[date, DayOHLC]":
+    """
+    Forward-fill days with no observation up to `last_day` with a flat candle
+    at the previous close — but only while the player is in Legend (their last
+    point on the previous observed day was a Legend point). A Legend rank
+    unchanged for a day is still a real rank, whereas a missing sub-Legend day
+    just means nothing was tracked, so that stays a gap.
+    """
+    if not daily:
+        return daily
+    last_kind: dict[date, str] = {}
+    for timestamp, point in merged_points:
+        last_kind[timestamp.astimezone(timezone.utc).date()] = point.kind
+
+    filled = dict(daily)
+    day = min(daily)
+    prev: DayOHLC | None = None
+    in_legend = False
+    while day <= last_day:
+        if day in daily:
+            prev = daily[day]
+            in_legend = last_kind.get(day) == "legend"
+        elif prev is not None and in_legend:
+            filled[day] = DayOHLC(open=prev.close, close=prev.close, low=prev.close, high=prev.close)
+        day += timedelta(days=1)
+    return filled
 
 
 @dataclass(frozen=True)
